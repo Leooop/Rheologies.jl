@@ -14,7 +14,8 @@ abstract type Plasticity{T} <: AbstractBehavior{T} end
     function IncompressibleElasticity(E,ν)
         if ν <= 0.49
             ν = 0.4999999
-            @warn "Poisson ratio can not be lower than 0.49 to ensure that the material is close to incompressible, set to 0.4999999 by default"
+            @warn "Poisson ratio can not be lower than 0.49 to ensure that the material is
+            close to incompressible. Set to 0.4999999 by default"
         end
         new{typeof(E)}(E,convert(typeof(E),ν))
     end
