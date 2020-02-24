@@ -93,15 +93,25 @@ end
 function setup_model(grid::Grid, variables::Tuple, var_interp_order::Tuple,
                      quad_order::Int, quad_type::Symbol,
                      bc_dicts::BoundaryConditions)
+    # get elements geometry
     el_geom = getcelltype(grid)
-    interp_geom = default_interpolation(el_geom) # By default the interpolation is quadratic only if there are nodes in edges centers.
+
+    # interpolations ; By default geometry interpolation is quadratic only if there are nodes in edges centers.
+    interp_geom = default_interpolation(el_geom) #
     interp_vars = get_variables_interpolation(variables, var_interp_order, el_geom)
+
+    # quadrature rules
     qr, qr_face = get_quadrature_rules(quad_order, quad_type, el_geom)
 
+    # Dof handler and setup dirichlet bc
     dh = create_dofhandler(grid, interp_vars)
-    bcd = create_dirichlet_bc(dh, bc_dirichlet)
+    bcd = create_dirichlet_bc(dh, bc_dicts.dirichlet)
 
     # cellvalues
     cellvalues_u, cellvalues_p, facevalues_u = create_values(qr, qr_face, interp_geom, interp_vars...)
-    return dh, bcd, cellvalues_u, cellvalues_p, facevalues_u
+
+    # sparsity pattern
+    K = create_sparsity_pattern(dh);
+
+    return dh, bcd, cellvalues_u, cellvalues_p, facevalues_u, K
 end
