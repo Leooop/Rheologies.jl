@@ -39,3 +39,10 @@ struct Rheology{ T<:AbstractFloat,
 end
 
 Rheology(T ;viscosity, elasticity, plasticity) = Rheology(T,viscosity, elasticity, plasticity)
+
+### BOUNDARY CONDITIONS ###
+
+@kwdef struct BoundaryConditions
+    dirichlet::Dict
+    Neumann::Dict
+end

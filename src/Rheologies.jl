@@ -5,6 +5,6 @@ module Rheologies
 
     include("types.jl")
     include("interface.jl")
-    include("model.jl")
+    #include("model.jl")
 
 end # module

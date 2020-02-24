@@ -26,7 +26,7 @@ end
     qr, qr_face = R.get_quadrature_rules(3, :legendre, el_geom)
     interp_u1 = R.get_variables_interpolation((:u,), (2,), el_geom)
     interp_u2 = R.get_variables_interpolation((:u,:p), (2,1), el_geom)
-    interp_geom = J.default_interpolation(el_geometry)
+    interp_geom = J.default_interpolation(el_geom)
     @test length(R.create_values(qr, qr_face, interp_geom, interp_u1)) == 2
     @test length(R.create_values(qr, qr_face, interp_geom, interp_u2...)) == 3
 end
