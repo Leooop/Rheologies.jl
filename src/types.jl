@@ -1,6 +1,7 @@
 
 using Base: @kwdef
 
+### BEHAVIORS ###
 # Higher level supertype :
 abstract type AbstractBehavior{T} end
 
@@ -26,7 +27,7 @@ end
     ν::T
 end
 
-
+## RHEOLOGY ###
 Maybe(T)=Union{T,Nothing}
 
 struct Rheology{ T<:AbstractFloat,
@@ -40,6 +41,18 @@ end
 
 Rheology(T ;viscosity, elasticity, plasticity) = Rheology(T,viscosity, elasticity, plasticity)
 
+function Base.show(io::IO, ::MIME"text/plain", rheology::Rheology)
+    println(io, "Rheology type")
+    println("    -> viscosity  : $(typeof(rheology.viscosity))")
+    println("    -> elasticity : $(typeof(rheology.elasticity))")
+    println("    -> plasticity : $(typeof(rheology.plasticity))")
+end
+
+rheology_summary(r::Rheology{T,Nothing,Elasticity,Nothing}) = "elastic"
+rheology_summary(r::Rheology{T,Viscosity,Elasticity,Nothing}) = "visco-elastic"
+rheology_summary(r::Rheology{T,Viscosity,Nothing,Nothing}) = "viscous"
+rheology_summary(r::Rheology{T,Nothing,Elasticity,Plasticity}) = "elasto-plastic"
+rheology_summary(r::Rheology{T,Viscosity,Elasticity,Plasticity}) = "visco-elasto-plastic"
 ### BOUNDARY CONDITIONS ###
 
 @kwdef struct BoundaryConditions
