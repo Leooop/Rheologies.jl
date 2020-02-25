@@ -97,7 +97,7 @@ function setup_model(grid::Grid, variables::Tuple, var_interp_order::Tuple,
     el_geom = getcelltype(grid)
 
     # interpolations ; By default geometry interpolation is quadratic only if there are nodes in edges centers.
-    interp_geom = default_interpolation(el_geom) #
+    interp_geom = JuAFEM.default_interpolation(el_geom) #
     interp_vars = get_variables_interpolation(variables, var_interp_order, el_geom)
 
     # quadrature rules
@@ -114,4 +114,9 @@ function setup_model(grid::Grid, variables::Tuple, var_interp_order::Tuple,
     K = create_sparsity_pattern(dh);
 
     return dh, bcd, cellvalues_u, cellvalues_p, facevalues_u, K
+end
+
+function get_face_coordinates(cell::CellIterator, face::Int)
+    face_nodes_id = J.faces(cell.grid.cells[cell.current_cellid.x])[face]
+    return [cell.grid.nodes[nodeid].x for nodeid in face_nodes_id]
 end

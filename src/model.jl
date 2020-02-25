@@ -1,13 +1,25 @@
+using LinearAlgebra
 
+include("/Users/leo/.julia/dev/Rheologies/dev/input_file_traction.jl")
+function solve(grid::Grid,variables::Tuple,var_interp_order::Tuple,
+               quad_order::Int, quad_type::Symbol,
+               bc_dicts::BoundaryConditions,
+               rheology::Rheology ;
+               filename = nothing)
+    dh, dbc, cellvalues_u, cellvalues_p, facevalues_u, K = setup_model(grid::Grid, variables::Tuple,
+                                                                    var_interp_order::Tuple,
+                                                                    quad_order::Int, quad_type::Symbol,
+                                                                    bc_dicts::BoundaryConditions)
+    # Assemble stiffness matrix and force vector
+    K, f = doassemble(cellvalues_u, cellvalues_p, facevalues_u, K, grid, dh, bc_dicts, rheology);
+    apply!(K, f, dbc)
+    u = Symmetric(K) \ f;
 
-interp_geom = default_interpolation(el_geom) # By default the interpolation is quadratic only if there are nodes in edges centers.
-interp_vars = get_variables_interpolation(variables, var_interp_order, el_geom)
-qr, qr_face = get_quadrature_rules(quad_order, :legendre, el_geom)
-
-dh = create_dofhandler(grid, interp_vars)
-bc = create_dirichlet_bc(dh, bc_dirichlet)
-
-# cellvalues
-cellvalues_u, cellvalues_p, facevalues_u = create_values(qr, qr_face, interp_geom, interp_vars...)
-
-## TODO : go on !!!
+    # export
+    (filename == nothing) && (filename = rheology_summary(rheology))
+    J.vtk_grid(filename, dh) do vtkfile
+        vtk_point_data(vtkfile, dh, u)
+        vtk_point_data(vtkfile, dbc)
+    end
+    return u
+end

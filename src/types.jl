@@ -27,6 +27,14 @@ end
     ν::T
 end
 
+# function Base.show(io::IO, ::MIME"text/plain", elast::E) where{E<:Elasticity}
+#     println(io, "Elasticity of type $(typeof(elast))")
+#     println("    -> E : $(elast.E)")
+#     println("    -> ν : $(elast.ν)")
+# end
+
+get_G(e::Elasticity) = e.E/(2*(1+e.ν))
+get_K(e::Elasticity) = e.E/(3*(1-2*e.ν))
 ## RHEOLOGY ###
 Maybe(T)=Union{T,Nothing}
 
@@ -48,14 +56,14 @@ function Base.show(io::IO, ::MIME"text/plain", rheology::Rheology)
     println("    -> plasticity : $(typeof(rheology.plasticity))")
 end
 
-rheology_summary(r::Rheology{T,Nothing,Elasticity,Nothing}) = "elastic"
-rheology_summary(r::Rheology{T,Viscosity,Elasticity,Nothing}) = "visco-elastic"
-rheology_summary(r::Rheology{T,Viscosity,Nothing,Nothing}) = "viscous"
-rheology_summary(r::Rheology{T,Nothing,Elasticity,Plasticity}) = "elasto-plastic"
-rheology_summary(r::Rheology{T,Viscosity,Elasticity,Plasticity}) = "visco-elasto-plastic"
+rheology_summary(r::Rheology{T,Nothing,E,Nothing}) where{T,E<:Elasticity} = "elastic"
+rheology_summary(r::Rheology{T,V,E,Nothing}) where{T,V<:Viscosity,E<:Elasticity} = "visco-elastic"
+rheology_summary(r::Rheology{T,V,Nothing,Nothing}) where{T,V<:Viscosity} = "viscous"
+rheology_summary(r::Rheology{T,Nothing,E,P}) where{T,E<:Elasticity,P<:Plasticity} = "elasto-plastic"
+rheology_summary(r::Rheology{T,V,E,P}) where{T,V<:Viscosity,E<:Elasticity,P<:Plasticity} = "visco-elasto-plastic"
 ### BOUNDARY CONDITIONS ###
 
 @kwdef struct BoundaryConditions
     dirichlet::Dict
-    Neumann::Dict
+    neumann::Maybe(Dict)
 end
