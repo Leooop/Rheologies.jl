@@ -1,26 +1,14 @@
 
 
-refshape(::Type{Cell{1,N,2}}) where{N} = RefCube
-refshape(::Type{Cell{2,N,4}}) where{N} = RefCube
-refshape(::Type{Cell{3,N,6}}) where{N} = RefCube
-refshape(::Type{Cell{2,N,3}}) where{N} = RefTetrahedron
-refshape(::Type{Cell{3,N,4}}) where{N} = RefTetrahedron
-
-function get_variables_interpolation(variables::NTuple{L,Symbol}, var_interp_order::NTuple{L,Int}, el_geometry::Type{Cell{dim,N,M}}) where {L,dim,N,M}
-    interp_u = 0.0
-    (L == 2) && (interp_p = 0.0)
-    for (i,var) in enumerate(variables)
-        (var == :u) && (interp_u = Lagrange{dim,refshape(el_geometry),var_interp_order[i]}())
-        (var == :p) && (interp_p = Lagrange{dim,refshape(el_geometry),var_interp_order[i]}())
-    end
-    if L == 2
-        return interp_u, interp_p
-    elseif L == 1
-        return interp_u
-    else
-        @error "more than 2 variables (:u,:p) is not implemented yet"
-    end
-end
+# function get_variables_interpolation(variables::Variables{NV}, el_geometry::Type{Cell{dim,N,M}}) where {L,dim,N,M,var1,var2,var3}
+#     vars = variables.names
+#     (var1 == :u) && (interp_u = Lagrange{dim,refshape(el_geometry),var_interp_order[1]}())
+#     (var2 == :p) && (L == 2) && (interp_p = Lagrange{dim,refshape(el_geometry),var_interp_order[2]}())
+#     (L == 2) && return interp_u, interp_p
+#     (L == 1) && return interp_u
+#     @error "more than 2 variables (:u,:p) is not implemented yet"
+#
+# end
 
 function get_quadrature_rules(order::Int, type::Symbol, el_geom::Type{Cell{dim,N,M}}) where{dim,N,M}
     quad_cell = QuadratureRule{dim,refshape(el_geom)}(type, order)
@@ -43,28 +31,24 @@ function create_values(qr, qr_face, interp_geom, interp_u, interp_p)
     # cellvalues for p
     cellvalues_p = CellScalarValues(qr, interp_p, interp_geom)
 
-    return cellvalues_u, cellvalues_p, facevalues_u
+    return (cellvalues_u, cellvalues_p), facevalues_u
 end;
 
 get_dim(c::Cell{dim,N,M}) where{dim,N,M} = dim;
 get_dim(g::Grid) = get_dim(g.cells[1]);
 
-function create_dofhandler(grid, ipu::Lagrange)
+function create_dofhandler(grid::Grid, variables::Variables)
     dh = DofHandler(grid)
-    push!(dh, :u, get_dim(grid), ipu) # displacement
+    for (i,varname) in enumerate(variables.names)
+        if varname == :u
+            push!(dh, varname, get_dim(grid), variables.interpolations[i])
+        else
+            push!(dh, varname, 1, variables.interpolations[i])
+        end
+    end
     close!(dh)
     return dh
 end;
-
-function create_dofhandler(grid, ipu, ipp)
-    dh = DofHandler(grid)
-    push!(dh, :u, get_dim(grid), ipu) # displacement
-    push!(dh, :p, 1, ipp) # pressure
-    close!(dh)
-    return dh
-end;
-
-create_dofhandler(grid, ip_vars::Tuple) = create_dofhandler(grid, ip_vars...);
 
 function getset(grid::Grid,name::String)
     for (iset,set) in enumerate((grid.cellsets, grid.facesets, grid.nodesets))
@@ -90,30 +74,29 @@ function create_dirichlet_bc(dh::DofHandler, bc_dirichlet::Dict)
     return dbc
 end
 
-function setup_model(grid::Grid, variables::Tuple, var_interp_order::Tuple,
+function setup_model(grid::Grid, variables::Variables,
                      quad_order::Int, quad_type::Symbol,
                      bc_dicts::BoundaryConditions)
     # get elements geometry
     el_geom = getcelltype(grid)
 
-    # interpolations ; By default geometry interpolation is quadratic only if there are nodes in edges centers.
+    # By default geometry interpolation is quadratic only if there are nodes in edges centers.
     interp_geom = JuAFEM.default_interpolation(el_geom) #
-    interp_vars = get_variables_interpolation(variables, var_interp_order, el_geom)
 
     # quadrature rules
     qr, qr_face = get_quadrature_rules(quad_order, quad_type, el_geom)
 
     # Dof handler and setup dirichlet bc
-    dh = create_dofhandler(grid, interp_vars)
+    dh = create_dofhandler(grid, variables)
     bcd = create_dirichlet_bc(dh, bc_dicts.dirichlet)
 
     # cellvalues
-    cellvalues_u, cellvalues_p, facevalues_u = create_values(qr, qr_face, interp_geom, interp_vars...)
+    cellvalues, facevalues = create_values(qr, qr_face, interp_geom, variables.interpolations...)
 
     # sparsity pattern
     K = create_sparsity_pattern(dh);
 
-    return dh, bcd, cellvalues_u, cellvalues_p, facevalues_u, K
+    return dh, bcd, cellvalues, facevalues, K
 end
 
 function get_face_coordinates(cell::CellIterator, face::Int)

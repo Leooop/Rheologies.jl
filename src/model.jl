@@ -1,19 +1,21 @@
 using LinearAlgebra
 
-include("/Users/leo/.julia/dev/Rheologies/dev/input_file_traction.jl")
-function solve(grid::Grid,variables::Tuple,var_interp_order::Tuple,
+#include("/Users/leo/.julia/dev/Rheologies/dev/input_file_traction.jl")
+function run_simulation(grid::Grid,variables::Variables,
                quad_order::Int, quad_type::Symbol,
                bc_dicts::BoundaryConditions,
-               rheology::Rheology ;
+               rheology::Rheology,
+               clock::Clock;
                filename = nothing)
-    dh, dbc, cellvalues_u, cellvalues_p, facevalues_u, K = setup_model(grid::Grid, variables::Tuple,
-                                                                    var_interp_order::Tuple,
-                                                                    quad_order::Int, quad_type::Symbol,
-                                                                    bc_dicts::BoundaryConditions)
+
+    # setup types
+    dh, dbc, cellvalues, facevalues, K = setup_model(grid::Grid,
+                                                    variables::Variables,
+                                                    quad_order::Int, quad_type::Symbol,
+                                                    bc_dicts::BoundaryConditions)
     # Assemble stiffness matrix and force vector
-    K, f = doassemble(cellvalues_u, cellvalues_p, facevalues_u, K, grid, dh, bc_dicts, rheology);
-    apply!(K, f, dbc)
-    u = Symmetric(K) \ f;
+    u = assemble_and_solve(cellvalues, facevalues, K, grid, dh, dbc, bc_dicts.neumann, rheology, clock)
+
 
     # export
     (filename == nothing) && (filename = rheology_summary(rheology))
