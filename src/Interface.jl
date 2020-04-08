@@ -21,7 +21,7 @@ function create_values(qr, qr_face, interp_geom, interp_u)
         cellvalues_u = CellVectorValues(qr, interp_u, interp_geom)
         facevalues_u = FaceVectorValues(qr_face, interp_u, interp_geom)
 
-    return cellvalues_u, facevalues_u
+    return (cellvalues_u,), facevalues_u
 end;
 
 function create_values(qr, qr_face, interp_geom, interp_u, interp_p)
@@ -76,7 +76,7 @@ end
 
 function setup_model(grid::Grid, variables::Variables,
                      quad_order::Int, quad_type::Symbol,
-                     bc_dicts::BoundaryConditions)
+                     bc_dicts::BoundaryConditions, rheology::Rheology)
     # get elements geometry
     el_geom = getcelltype(grid)
 
@@ -96,10 +96,36 @@ function setup_model(grid::Grid, variables::Variables,
     # sparsity pattern
     K = create_sparsity_pattern(dh);
 
-    return dh, bcd, cellvalues, facevalues, K
+    mp = create_material_properties(grid, rheology)
+
+    return dh, bcd, cellvalues, facevalues, mp, K
 end
 
 function get_face_coordinates(cell::CellIterator, face::Int)
     face_nodes_id = J.faces(cell.grid.cells[cell.current_cellid.x])[face]
     return [cell.grid.nodes[nodeid].x for nodeid in face_nodes_id]
 end
+
+function get_cell_centroid(grid,cellid)
+    nodesid = Base.vect(grid.cells[cellid].nodes...)
+    nodes = StructArray(grid.nodes[nodesid])
+    return mean(nodes.x)
+end
+
+
+function create_material_properties(grid::Grid, rheology::Rheology{T}) where {T<:AbstractFloat}
+    StructArray(fill(rheology,getncells(grid)), unwrap = t -> (t <: AbstractBehavior{T}))
+end
+
+function create_material_properties(grid::Grid{dim}, rheology::Rheology{Function,D,V,E,P}) where {dim,D,V,E,P}
+    x_test = rand(dim)
+    tparams = gettypeparameters(rheology(x_test))
+    mp = Rheology{tparams...}[]
+    for cellid in 1:getncells(grid)
+        centroid_x = get_cell_centroid(grid,cellid)
+        push!(mp,rheology(centroid_x))
+    end
+    return StructArray(mp, unwrap = t -> (t <: AbstractBehavior{tparams[1]}))
+end
+
+gettypeparameters(::Rheology{T,D,V,E,P}) where {T,D,V,E,P} = (T,D,V,E,P)
