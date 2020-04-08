@@ -30,3 +30,27 @@ end
     @test length(R.create_values(qr, qr_face, interp_geom, interp_u1)) == 2
     @test length(R.create_values(qr, qr_face, interp_geom, interp_u2...)) == 3
 end
+
+
+@testset "create material properties" begin
+    func_1D(x) = x[1]
+    func_2D(x) = x[1] + x[2]
+    elasticity1D = IncompressibleElasticity(E = func_1D, ν =0.4999)
+    elasticity2D = IncompressibleElasticity(E = func_2D, ν =0.4999)
+
+    r1D = Rheology(nothing,nothing,elasticity1D,nothing)
+    r2D = Rheology(nothing,nothing,elasticity2D,nothing)
+
+    grid1D = generate_grid(Line,(2,), Vec(0.0), Vec(10.0))
+    grid2D = generate_grid(Quadrilateral,(2, 2), Vec(0.0,0.0), Vec(10.0,10.0))
+
+    mp1D = create_material_properties(grid1D, r1D)
+    mp2D = create_material_properties(grid1D, r1D)
+
+    @test r1D(1.0).elasticity.E == 1.0
+    @test r2D([1.0,2.0]).elasticity.E == 3.0
+
+
+
+
+end
