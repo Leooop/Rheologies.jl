@@ -1,10 +1,12 @@
 module Rheologies
 
     using Reexport
+
+    #@reexport using Tensors
     @reexport using JuAFEM
     const J = JuAFEM
     import JuAFEM: QuadratureRule
-    @reexport using Tensors
+
     using InteractiveUtils: subtypes
     using SparseArrays
     using BlockArrays
@@ -24,7 +26,8 @@ module Rheologies
     export Viscosity
     export Elasticity, IncompressibleElasticity, CompressibleElasticity
     export Plasticity, IdealPlasticity, AssociatedDruckerPrager,
-           NonAssociatedDruckerPrager, VonMises
+           NonAssociatedDruckerPrager, VonMises, ViscoLinearHardeningDP
+    export Damage, BRSDamage
 
     # functions
     export run_simulation, setup_model, create_material_properties
