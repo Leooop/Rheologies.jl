@@ -63,6 +63,19 @@ function getset(grid::Grid,name::String)
     @warn "set name \"$name\" not found in grid object"
 end
 
+function get_set_type(grid::Grid,name::String)
+    for (iset,set) in enumerate((grid.cellsets, grid.facesets, grid.nodesets))
+        for key in keys(set)
+            if key == name
+                iset == 1 && return :cellset
+                iset == 2 && return :faceset
+                iset == 3 && return :nodeset
+            end
+        end
+    end
+    @warn "set name \"$name\" not found in grid object"
+end
+
 function create_dirichlet_bc(dh::DofHandler, bc_dirichlet::Dict)
     dbc = ConstraintHandler(dh)
     for (key,value) in pairs(bc_dirichlet)

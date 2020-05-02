@@ -13,6 +13,7 @@ abstract type Plasticity{T} <: AbstractBehavior{T} end
 abstract type IdealPlasticity{T} <: Plasticity{T} end
 abstract type NonIdealPlasticity{T} <: Plasticity{T} end
 
+abstract type ViscoPlasticity{T} <: NonIdealPlasticity{T} end
 
 Maybe(T)=Union{T,Nothing}
 
@@ -42,9 +43,9 @@ end
 CompressibleElasticity{T}(E,ν) where {T} = CompressibleElasticity(E,ν)
 
 function Base.show(io::IO, ::MIME"text/plain", elast::E) where{E<:Elasticity}
-    println(io, "$(typeof(elast))")
-    println(io, "         E : $(elast.E)")
-    println(io, "         ν : $(elast.ν)")
+    print(io, "$(typeof(elast))\n",
+    "├── E : $(elast.E)\n",
+    "└── ν : $(elast.ν)\n")
 end
 
 get_G(e::Elasticity{T}) where {T<:AbstractFloat} = e.E/(2*(1+e.ν))
@@ -122,7 +123,7 @@ AssociatedDruckerPrager{T}(μ,ϕ,ψ,C) where {T} = AssociatedDruckerPrager(μ,ϕ
                 @error "At least ϕ or μ must be provided"
             end
         else
-            μ != 0 && @error "Ambiguity between μ and ϕ, please provide only one of them"
+            #μ != 0 && @error "Ambiguity between μ and ϕ, please provide only one of them"
             if ϕ isa Function
                 return new{T2}(x->tand(ϕ(x)), ϕ, ψ, C)
             elseif ϕ isa Float64
@@ -137,12 +138,49 @@ NonAssociatedDruckerPrager{T}(μ,ϕ,ψ,C) where {T} = NonAssociatedDruckerPrager
 
 function Base.show(io::IO, ::MIME"text/plain",
                    plast::Union{AssociatedDruckerPrager,NonAssociatedDruckerPrager})
-    println(io, "$(typeof(plast))")
-    println(io, "         μ : $(plast.μ)")
-    println(io, "         ϕ : $(plast.ϕ)")
-    println(io, "         ψ : $(plast.ψ)")
-    println(io, "         C : $(plast.C)")
+    print(io, "$(typeof(plast))\n",
+    "├── μ : $(plast.μ)\n",
+    "├── ϕ : $(plast.ϕ)\n",
+    "├── ψ : $(plast.ψ)\n",
+    "└── C : $(plast.C)\n")
 end
+
+
+
+@kwdef mutable struct ViscoLinearHardeningDP{T} <: ViscoPlasticity{T}
+    μ::Union{Float64,Function} = 0.0
+    ϕ::Union{Float64,Function} = 0.0
+    ψ::Union{Float64,Function} = 0.0
+    C::Union{Float64,Function} = 0.0
+    H::Union{Float64,Function} = 0.0
+    ηᵛᵖ::Union{Float64,Function} = 0.0
+    function ViscoLinearHardeningDP(μ,ϕ,ψ,C,H,ηᵛᵖ)
+        T2 = any(isa.((μ,ϕ,ψ,C,H,ηᵛᵖ),Function)) ? Function : typeof(μ)
+        if ϕ == 0
+            if μ != 0
+                if μ isa Function
+                    return new{T2}(μ, x->atand(μ(x)), ψ, C, H, ηᵛᵖ)
+                elseif μ isa Float64
+                    return new{T2}(μ, atand(μ), ψ, C, H, ηᵛᵖ)
+                else
+                    @error "Unexpected type of field μ"
+                end
+            else
+                @error "At least ϕ or μ must be provided"
+            end
+        else
+            #μ != 0 && @error "Ambiguity between μ and ϕ, please provide only one of them"
+            if ϕ isa Function
+                return new{T2}(x->tand(ϕ(x)), ϕ, ψ, C, H, ηᵛᵖ)
+            elseif ϕ isa Float64
+                return new{T2}(tand(ϕ), ϕ, ψ, C, H, ηᵛᵖ)
+            else
+                @error "Unexpected type of field ϕ"
+            end
+        end
+    end
+end
+ViscoLinearHardeningDP{T}(μ,ϕ,ψ,C,H,ηᵛᵖ) where {T} = ViscoLinearHardeningDP(μ,ϕ,ψ,C,H,ηᵛᵖ)
 
 
 @kwdef mutable struct VonMises{T} <: IdealPlasticity{T}
@@ -156,10 +194,29 @@ VonMises{T}(C) where {T} = VonMises(C)
 
 function Base.show(io::IO, ::MIME"text/plain",
                    plast::VonMises)
-    println(io, "$(typeof(plast))")
-    println(io, "         C : $(plast.C)")
+    print(io, "$(typeof(plast))\n",
+    "└── C : $(plast.C)")
 end
 
+## Damage concrete types :
+
+@kwdef mutable struct BRSDamage{T} <: Damage{T}
+    μ::Union{Float64,Function} = 0.6 # Friction coef
+    β::Union{Float64,Function} = 0.1 # Correction factor
+    K₁c::Union{Float64,Function} = 1.74e6 # Critical stress intensity factor (Pa.m^(1/2))
+    a::Union{Float64,Function} # Initial flaw size (m)
+    ψ::Union{Float64,Function} # crack angle to the principal stress (radians)
+    D₀::Union{Float64,Function} # Initial flaw density
+    n::Union{Float64,Function} = 34.0 # Stress corrosion index
+    l̇₀::Union{Float64,Function} = 0.24 # Ref. crack growth rate (m/s)
+    H::Union{Float64,Function} = 50e3 # Activation enthalpy (J/mol)
+    A::Union{Float64,Function} = 5.71 # Preexponential factor (m/s)
+    function BRSDamage(μ,β,K₁c,a,ψ,D₀,n,l̇₀,H,A)
+        T2 = any(isa.((μ,β,K₁c,a,ψ,D₀,n,l̇₀,H,A),Function)) ? Function : typeof(β)
+        new{T2}(μ,β,K₁c,a,ψ,D₀,n,l̇₀,H,A)
+    end
+end
+BRSDamage{T}(μ,β,K₁c,a,ψ,D₀,n,l̇₀,H,A) where {T} = BRSDamage(μ,β,K₁c,a,ψ,D₀,n,l̇₀,H,A)
 
 
 ## RHEOLOGY ###
@@ -200,22 +257,22 @@ Rheology(; damage, viscosity, elasticity, plasticity) = Rheology(damage, viscosi
 function (r::Rheology{Function})(x)
     args = []
     for prop in propertynames(r)
+        behavior = deepcopy(getproperty(r,prop))
         if typeof(getproperty(r,prop)) <: AbstractBehavior{Function}
-            behavior = deepcopy(getproperty(r,prop))
             for b_prop in propertynames(behavior)
                 bp = getproperty(behavior,b_prop)
                 if isa(bp, Function)
                     try
                     setproperty!(behavior,b_prop,bp(x))
                     catch err
-                        @error "An error occured during the evaluation of a field function. Make sure that the length of the coordinate argument of your defined functions match the dimensions of your grid"
+                        @error "An error occured during the evaluation of a field function. Make sure that the length of the coordinate argument of your defined functions matchs the dimensions of your grid"
                         throw(err)
                     end
                 end
             end
             push!(args,updatetypeparameter(behavior))
-        elseif getproperty(r,prop) == nothing
-            push!(args,nothing)
+        else
+            push!(args,behavior)
         end
     end
     return Rheology(args...)
@@ -229,7 +286,7 @@ function Base.show(io::IO, ::MIME"text/plain", rheology::Rheology{T,D,V,E,P}) wh
     if T <: Real
         println(io, "⌗  $(typeof(rheology)) instance ")
     elseif T == Function
-        println(io, "⌗  $(typeof(rheology)) instance ")
+        println(io, "⌗  $(typeof(rheology)) instance with functional parameters ")
     end
     print(io, "    -> damage  : ")
     show(io,rheology.damage); print(io,"\n")
@@ -316,7 +373,7 @@ function Variables{NV}(names,ip_order,el_geom::Type{Cell{dim,N,M}}) where {NV,di
     NV == 1 && return Variables{NV}(names, (Lagrange{dim,refshape(el_geom),ip_order[1]}(),))
     NV == 2 && return Variables{NV}(names, (Lagrange{dim,refshape(el_geom),ip_order[1]}(),
                                           Lagrange{dim,refshape(el_geom),ip_order[2]}()) )
-    @error "More than 2 variables (:u,:p) is not implemented yet"
+    @error "More than 2 variables (:u and :p) is not implemented yet"
 end
 
 
@@ -324,23 +381,31 @@ end
 ### Time Handler ###
 
 @kwdef mutable struct Clock{T}
-    t0::T = 0.0
+    tspan::Tuple{T,T}
     current_time::T = 0.0
-    cfl::T = 0.0
-    Δt::T = 0.0
-    Clock(t0::T,current_time::T,cfl::T,Δt::T) where {T} = new{T}(t0,current_time,cfl,Δt)
+    iter::Int = 0
+    Δt_max::T = 1.0
+    Δt::T = 1.0
+    time_vec::Vector{T} = [0.0]
+    Clock(tspan::Tuple{T,T},current_time::T,iter::Int,Δt_max::T,Δt::T,time_vec::Vector{T}) where {T} = new{T}(tspan,current_time,iter,Δt_max,Δt,time_vec)
 end
-Clock{T}(t0,current_time,cfl,Δt) where {T} = Clock(t0,current_time,cfl,Δt)
+Clock{T}(tspan,current_time,iter,Δt_max,Δt,time_vec) where {T} = Clock(tspan,current_time,iter,Δt_max,Δt,time_vec)
+Clock(tspan,current_time,iter,Δt_max,Δt) = Clock(tspan,current_time,iter,Δt_max,Δt,[tspan[1]])
+Clock(tspan::Tuple,Δt_max) = Clock(tspan,tspan[1],0,Δt_max,Δt_max)
+Clock(tspan::Tuple) = Clock(tspan,tspan[1],0,1.0,1.0)
 Clock{Nothing}() = Clock{Nothing}(nothing,nothing,nothing,nothing)
-#Clock(cfl) = Clock(zero(typeof(clf)),zero(typeof(clf)),cfl,zero(typeof(clf)))
+
+#Clock(t_max) = Clock(zero(typeof(clf)),zero(typeof(clf)),Δt_max,zero(typeof(clf)))
 
 function Base.show(io::IO, ::MIME"text/plain", c::Clock{T}) where {T}
     if T <: AbstractFloat
-        println(io, "⌗  Clock instance")
-        println(io, "    -> t0 : $(c.t0)")
-        println(io, "    -> current_time : $(c.current_time)")
-        println(io, "    -> clf : $(c.cfl)")
-        println(io, "    -> Δt : $(c.Δt)")
+        print(io, "⌗  Clock instance\n",
+        "├── tspan : $(c.tspan)\n",
+        "├── current_time : $(c.current_time)\n",
+        "├── iter : $(c.iter)\n",
+        "├── Δt_max : $(c.Δt_max)\n",
+        "├── Δt : $(c.Δt)\n",
+        "└── time_vec : $(c.time_vec)\n")
     elseif T == Nothing
         println(io, "⌗  Empty Clock instance : No time dependency of the problem")
     end
@@ -366,9 +431,17 @@ function updatetypeparameter(b::NonAssociatedDruckerPrager)
     properties = getproperty.(Ref(b),propertynames(b))
     return NonAssociatedDruckerPrager(properties...)
 end
+function updatetypeparameter(b::ViscoLinearHardeningDP)
+    properties = getproperty.(Ref(b),propertynames(b))
+    return ViscoLinearHardeningDP(properties...)
+end
 function updatetypeparameter(b::VonMises)
     properties = getproperty.(Ref(b),propertynames(b))
     return VonMises(properties...)
+end
+function updatetypeparameter(b::BRSDamage)
+    properties = getproperty.(Ref(b),propertynames(b))
+    return BRSDamage(properties...)
 end
 
 # would be gould to generate these functions for each Behavior <: AbstractBehavior using code generation, but the following raises an UndefVarError "CompressibleElasticity not defined"
