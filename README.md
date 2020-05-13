@@ -34,7 +34,7 @@ Requires Julia v1.3 or higher
 Elasto-plastic 2D plane strain deformation :
 
 ```julia
-## TIME ##
+## TIME DOMAIN ##
 clock = Clock(tspan = (0.0,10.0), Δt = 0.5) # in seconds
 
 ## SPATIAL DOMAIN ##
@@ -96,13 +96,13 @@ nlsolver = NewtonRaphson(atol = 1e-5, linear_solver = BackslashSolver())
 
 ### MODEL ###
 model = Model( grid = grid,
-                       variables = variables,
-                       quad_order = quad_order,
-                       quad_type = quad_type,
-                       bc = bc,
-                       rheology = elastoplastic_rheology,
-                       clock = clock,
-                       solver = nlsolver )
+               variables = variables,
+               quad_order = quad_order,
+               quad_type = quad_type,
+               bc = bc,
+               rheology = elastoplastic_rheology,
+               clock = clock,
+               solver = nlsolver )
 
 ### OUTPUTS ###
 path = "path/to/folder"
@@ -116,5 +116,5 @@ outputs = Dict( :σxx     => (r,s)-> s.σ[1,1],
 ow = VTKOutputWriter(model, path, outputs, interval = 1)
 
 ### SOLVE ###
-@time model_sol, u = solve(model ; output_writer = ow)
+@time model_sol, u = solve(model ; output_writer = ow, log = true) # log enables a performance evaluation of the simulation
  ```
