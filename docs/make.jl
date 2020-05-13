@@ -4,7 +4,7 @@ makedocs(;
     modules=[Rheologies],
     format=Documenter.HTML(),
     pages=[
-        "Home" => "index.md",
+        "Home" => "index.md"#"Background" => "background.md","Examples" => "examples.md","API" => "api.md"
     ],
     repo="https://github.com/Leooop/Rheologies.jl/blob/{commit}{path}#L{line}",
     sitename="Rheologies.jl",
@@ -13,5 +13,5 @@ makedocs(;
 )
 
 deploydocs(;
-    repo="github.com/Leooop/Rheologies.jl",
+    repo="github.com/Leooop/Rheologies.jl.git",
 )

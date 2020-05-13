@@ -7,29 +7,42 @@ module Rheologies
     const J = JuAFEM
     import JuAFEM: QuadratureRule
 
+    #using Parameters
     using InteractiveUtils: subtypes
+    using TimerOutputs
+    using Printf
     using SparseArrays
     using BlockArrays
-    using StructArrays
     using StaticArrays
+    using StructArrays
+    using LinearAlgebra
+    import KrylovMethods
+    import IterativeSolvers
 
-    include("types.jl")
+    include("convenience_functions.jl")
+    include("types/types.jl")
+    include("physical_functions.jl")
+    include("tangent_operators.jl")
     include("interface.jl")
-    include("model.jl")
-    include("iterations.jl")
+    include("main.jl")
+    include("linear_solve.jl")
+    include("nonlinear_iterations.jl")
     include("assemble/assembling.jl")
 
     # exports #
     # types
-    export MaterialProperties, Rheology, BoundaryConditions, Variables, Clock
+    export Model
+    export MaterialState, BasicMaterialState, PlasticMaterialState, DamagedPlasticMaterialState
+    export Solver, LinearSolver, NonLinearSolver, BackslashSolver, NewtonRaphson, ConjugateGradient
+    export Rheology, BoundaryConditions, Variables, Clock, PrimitiveVariables
     export Damage
     export Viscosity
-    export Elasticity, IncompressibleElasticity, CompressibleElasticity
-    export Plasticity, IdealPlasticity, AssociatedDruckerPrager,
-           NonAssociatedDruckerPrager, VonMises, ViscoLinearHardeningDP
+    export Elasticity
+    export Plasticity, DruckerPrager, VonMises
     export Damage, BRSDamage
+    export VTKOutputWriter
 
     # functions
-    export run_simulation, setup_model, create_material_properties
+    export solve, setup_model, create_material_properties
 
 end # module
