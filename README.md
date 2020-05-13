@@ -47,11 +47,10 @@ grid = generate_grid(el_geom, (nx, ny), Vec(0.0,0.0), Vec(Lx,Ly)) # can take 2 o
 # Add facesets / nodesets / cellsets on which Dirichlet bc will be applied (top, bottom, left and right boundary are implemented by default)
 addnodeset!(grid, "clamped", x -> ( (x[1] == Lx/2) & (x[2] in (0.0, Ly)) ) ); # middle of the top and bottom boundaries
 
-
 ## PRIMITIVE VARIABLES AND INTERPOLATIONS ##
 variables = PrimitiveVariables{1}((:u,), (2,), el_geom) # {1} variable :u with second order interpolation on el_geom
 
-
+## QUADRATURE ##
 quad_order = 2 # quadrature order
 quad_type = :legendre # quadrature rule (:legendre or :lobatto)
 
@@ -74,7 +73,6 @@ bc = BoundaryConditions(dirichlet = Dict("top" => [:u, (x,t)-> -v_in*t, 2],
                         neumann   = nothing)
 
 ## MATERIAL RHEOLOGY :
-# function to prescribe different properties in a circle
 seed(x,x0,r,val_in::T,val_out::T) where {T<:Real} = (sqrt((x[1]-x0[1])^2 + (x[2]-x0[2])^2) <= r ?
                                    val_in : val_out)
 
@@ -86,7 +84,6 @@ plas  = DruckerPrager(ϕ = 30.0,
 
 rheology = Rheology(elasticity = elast,
                     plasticity = plas)
-
 
 ### SOLVER ###
 # Use Newton Raphson non linear iterations
@@ -105,6 +102,7 @@ model = Model( grid = grid,
 ### OUTPUTS ###
 path = "path/to/folder"
 
+# what to export :
 outputs = Dict( :σxx     => (r,s)-> s.σ[1,1],
                 :σyy     => (r,s)-> s.σ[2,2],
                 :σzz     => (r,s)-> s.σ[3,3],
