@@ -108,12 +108,14 @@ model = Model( grid = grid,
 path = "path/to/folder"
 
 # what to export :
+#key : name of the field
+#value : function of (r,s) for rheology instance and state instance, state object contains σ and ϵ (+ ϵᵖ and ϵ̅ᵖ for plastic material)
 outputs = Dict( :σxx     => (r,s)-> s.σ[1,1],
                 :σyy     => (r,s)-> s.σ[2,2],
                 :σzz     => (r,s)-> s.σ[3,3],
-                :acum_ep => (r,s)-> norm(s.ϵ̅ᵖ))
+                :acum_ep => (r,s)-> s.ϵ̅ᵖ )
 
-ow = VTKOutputWriter(model, path, outputs, interval = 1)
+ow = VTKOutputWriter(model, path, outputs, interval = 1) # every `interval` iteration (can also be every `frequency` seconds if `frequency` keyword is used instead)
 
 ### SOLVE ###
 @time model_sol, u = solve(model ; output_writer = ow, log = true) # log enables a performance evaluation of the simulation
