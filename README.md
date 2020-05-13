@@ -1,6 +1,6 @@
 # Rheologies
 
-A [Julia](http://julialang.org) package for finite element based simulations of visco-elasto-plastic deformation. It extends the `JuAFEM package, used as a toolbox for finite element modeling.
+A [Julia](http://julialang.org) package for finite element based simulations of visco-elasto-plastic deformation. It extends the `JuAFEM` package, used as a toolbox for finite element modeling.
 
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://Leooop.github.io/Rheologies.jl/stable)
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://Leooop.github.io/Rheologies.jl/dev)
@@ -27,6 +27,7 @@ Requires Julia v1.3 or higher
 
 #### Exemple
 
+Elasto-plastic 2D plane strain deformation :
 
 ```julia
 ## TIME ##
