@@ -37,7 +37,7 @@ end;
 get_dim(c::Cell{dim,N,M}) where{dim,N,M} = dim;
 get_dim(g::Grid) = get_dim(g.cells[1]);
 
-function create_dofhandler(grid::Grid, variables::Variables)
+function create_dofhandler(grid::Grid, variables::PrimitiveVariables)
     dh = DofHandler(grid)
     for (i,varname) in enumerate(variables.names)
         if varname == :u
@@ -87,7 +87,7 @@ function create_dirichlet_bc(dh::DofHandler, bc_dirichlet::Dict)
     return dbc
 end
 
-function setup_model(grid::Grid, variables::Variables,
+function setup_model(grid::Grid, variables::PrimitiveVariables,
                      quad_order::Int, quad_type::Symbol,
                      bc_dicts::BoundaryConditions, rheology::Rheology)
     # get elements geometry
@@ -108,10 +108,12 @@ function setup_model(grid::Grid, variables::Variables,
 
     # sparsity pattern
     K = create_sparsity_pattern(dh);
+    RHS = zeros(ndofs(dh))
 
     mp = create_material_properties(grid, rheology)
+    ms = create_material_states(rheology,grid,cellvalues[1])
 
-    return dh, bcd, cellvalues, facevalues, mp, K
+    return dh, bcd, cellvalues, facevalues, mp, ms, K, RHS
 end
 
 function get_face_coordinates(cell::CellIterator, face::Int)
@@ -126,9 +128,7 @@ function get_cell_centroid(grid,cellid)
 end
 
 
-function create_material_properties(grid::Grid, rheology::Rheology{T}) where {T<:AbstractFloat}
-    StructArray(fill(rheology,getncells(grid)), unwrap = t -> (t <: AbstractBehavior{T}))
-end
+create_material_properties(grid::Grid, rheology::Rheology{T}) where {T<:AbstractFloat} = fill(rheology,getncells(grid))
 
 function create_material_properties(grid::Grid{dim}, rheology::Rheology{Function,D,V,E,P}) where {dim,D,V,E,P}
     x_test = rand(dim)
@@ -138,7 +138,20 @@ function create_material_properties(grid::Grid{dim}, rheology::Rheology{Function
         centroid_x = get_cell_centroid(grid,cellid)
         push!(mp,rheology(centroid_x))
     end
-    return StructArray(mp, unwrap = t -> (t <: AbstractBehavior{tparams[1]}))
+    return mp
+end
+
+function create_material_states(r::Rheology{T,Nothing,V,E,Nothing},grid::Grid,cv) where {T,V,E}
+    nqp = getnquadpoints(cv)
+    return [[BasicMaterialState() for _ in 1:nqp] for _ in 1:getncells(grid)]
+end
+function create_material_states(r::Rheology{T,Nothing,V,E,P},grid::Grid,cv) where {T,V,E,P<:Plasticity}
+    nqp = getnquadpoints(cv)
+    return [[PlasticMaterialState() for _ in 1:nqp] for _ in 1:getncells(grid)]
+end
+function create_material_states(r::Rheology{T,D,V,E,P},grid::Grid,cv) where {T,D<:Damage,V,E,P<:Plasticity}
+    nqp = getnquadpoints(cv)
+    return [[DamagedPlasticMaterialState(r) for _ in 1:nqp] for _ in 1:getncells(grid)]
 end
 
 gettypeparameters(::Rheology{T,D,V,E,P}) where {T,D,V,E,P} = (T,D,V,E,P)

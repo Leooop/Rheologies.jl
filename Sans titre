@@ -1,0 +1,32 @@
+### Time Handler ###
+
+@kwdef mutable struct Clock{T}
+    tspan::Tuple{T,T}
+    current_time::T = 0.0
+    iter::Int = 0
+    Δt_max::T = 1.0
+    Δt::T = 1.0
+    time_vec::Vector{T} = [0.0]
+    Clock(tspan::Tuple{T,T},current_time::T,iter::Int,Δt_max::T,Δt::T,time_vec::Vector{T}) where {T} = new{T}(tspan,current_time,iter,Δt_max,Δt,time_vec)
+end
+Clock{T}(tspan,current_time,iter,Δt_max,Δt,time_vec) where {T} = Clock(tspan,current_time,iter,Δt_max,Δt,time_vec)
+Clock(tspan,current_time,iter,Δt_max,Δt) = Clock(tspan,current_time,iter,Δt_max,Δt,[tspan[1]])
+Clock(tspan::Tuple,Δt_max) = Clock(tspan,tspan[1],0,Δt_max,Δt_max)
+Clock(tspan::Tuple) = Clock(tspan,tspan[1],0,1.0,1.0)
+Clock{Nothing}() = Clock{Nothing}(nothing,nothing,nothing,nothing)
+
+#Clock(t_max) = Clock(zero(typeof(clf)),zero(typeof(clf)),Δt_max,zero(typeof(clf)))
+
+function Base.show(io::IO, ::MIME"text/plain", c::Clock{T}) where {T}
+    if T <: AbstractFloat
+        print(io, "⌗  Clock instance\n",
+        "├── tspan        : $(c.tspan)\n",
+        "├── current_time : $(c.current_time)\n",
+        "├── iter         : $(c.iter)\n",
+        "├── Δt_max       : $(c.Δt_max)\n",
+        "├── Δt           : $(c.Δt)\n",
+        "└── time_vec     : $(c.time_vec)\n")
+    elseif T == Nothing
+        println(io, "⌗  Empty Clock instance : No time dependency of the problem")
+    end
+end
