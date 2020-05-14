@@ -1,5 +1,18 @@
 ### Time Handler ###
+"""
+`Clock` type contains information related to time
 
+# Fields
+- `tspan`::Tuple{Float64,Float64} : simulation time interval
+- `current_time`::Float64 : current simulation time
+- `iter`::Int : iteration number
+- `Δt_max`::Float64 : maximum timestep
+- `Δt`::Float64 : timestep
+- `time_vec`::Vector{Float64} : vector containing times for each iteration 
+- `variable_Δt`::Bool : controls the ability to adapt the timestep
+- `Δt_fact_up`::Float64 : timestep increase factor
+- `Δt_fact_down`::Float64 : timestep decrease factor
+"""
 mutable struct Clock
     tspan::Tuple{Float64,Float64}
     current_time::Float64
@@ -11,17 +24,43 @@ mutable struct Clock
     Δt_fact_up::Float64 # timestep increase factor
     Δt_fact_down::Float64 # timestep decrease factor
     function Clock(tspan,Δt_max,Δt,variable_Δt,Δt_fact_up,Δt_fact_down)
-        current_time = tspan[1]
+        current_time = float(tspan[1])
         iter = 1
         time_vec = Float64[tspan[1]]
         if variable_Δt == false
             Δt_fact_up = 1.0
             Δt_fact_down = 1.0
         end
-        new(tspan,current_time,iter,Δt_max,Δt,time_vec,variable_Δt,Δt_fact_up,Δt_fact_down)
+        new(convert(Tuple{Float64,Float64},tspan),current_time,iter,float(Δt_max),float(Δt),time_vec,variable_Δt,float(Δt_fact_up),float(Δt_fact_down))
     end
 end
+
+"""
+    Clock(tspan::Tuple, Δt ; <keyword arguments>)
+
+Clock constructor with time span `tspan` and timestep `Δt`.
+
+# Keyword arguments
+- `Δt_max` = 1.0 : maximum Δt
+- `variable_Δt` = true : is the timestep allowed to change 
+- `Δt_fact_up` = 1.5 : timestep increase multiplier
+- `Δt_fact_down` = 0.5 : timestep decrease multiplier
+"""
 Clock(tspan, Δt; Δt_max = 1.0, variable_Δt = true, Δt_fact_up = 1.5, Δt_fact_down = 0.5) = Clock(tspan,Δt_max,Δt,variable_Δt,Δt_fact_up,Δt_fact_down)
+
+"""
+    Clock(<keyword arguments>)
+
+Clock constructor.
+
+# Keyword arguments
+- `tspan::Tuple` (mandatory) : time span 
+- `Δt` (mandatory) : timestep
+- `Δt_max` = 1.0 : maximum Δt
+- `variable_Δt` = true : is the timestep allowed to change 
+- `Δt_fact_up` = 1.5 : timestep increase multiplier
+- `Δt_fact_down` = 0.5 : timestep decrease multiplier
+"""
 Clock(;tspan, Δt_max = 1.0, Δt, variable_Δt = true, Δt_fact_up = 1.5, Δt_fact_down = 0.5) = Clock(tspan,Δt_max,Δt,variable_Δt,Δt_fact_up,Δt_fact_down)
 
 

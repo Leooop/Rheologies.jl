@@ -1,7 +1,36 @@
 ### MODEL ###
 # initialize all JuAFEM objects
 #const CVT = Union{Tuple{CellVectorValues,CellScalarValues},Tuple{CellVectorValues}}
+"""
+    Model{dim,N,D,V,E,P,S,MS,CVT,FV,DH,CH,NBC,SP,C}
 
+A `Model` instance contains all the informations needed to run a simulation.
+Type parameters associated to it are used to dispatch methods with respect to model specificities, especially {dim,N,D,V,E,P,S} (see description below).
+
+# Fields
+- `grid::Grid{dim}` : JuAFEM.Grid instance
+- `dofhandler::DH` : JuAFEM.DofHandler instance containing information about primitive variables discretization over the grid
+- `dirichlet_bc::CH` : JuAFEM.ConstraintHandler instance containing dirichlet boundary conditions
+- `neumann_bc::NBC` : dictionnary with `set_names`, `traction(x::Vector)` pairs
+- `cellvalues_tuple::CVT` : A tuple with as many elements as primitive variables in the model, with each one containing in cell integrations related informations
+- `facevalues::FV` : Same as cellvalues but for tractions integration on faces
+- `material_properties::Vector{Rheology{Float64,D,V,E,P}}` : A Vector of `Rheology`s instance associated to each cell
+- `material_state::Vector{Vector{MS}}` : `MaterialState`s for each integration point
+- `K::SP` : global stiffness matrix
+- `RHS::Vector{Float64}` : global right hand side vector (external force vector or residual vector in incremental formulation)
+- `clock::C` : `Clock` instance containing all time related informations
+- `solver::S` : `Solver` subtype instance containing informations about the solving procedure
+- `multithreading::Bool` : `True` to use multithreaded assembly
+
+# Type parameters
+- `dim::Int` : spatial dimensions of the model
+- `N::Int` : number of primitives variables. Commonly 1 (displacement) or 2 (displacement and pressure)
+- `D::Damage` : micromechanical properties of the rheology
+- `V::Viscosity` : viscous properties of the rheology
+- `E::Elasticity` : elastic properties of the rheology
+- `P::Plasticity` : plastic properties of the rheology
+- `S::Solver` : linear or non linear solver used
+"""
 struct Model{dim,N,D,V,E,P,S,MS,CVT,FV,DH,CH,NBC,SP,C}
     grid::Grid{dim}
     dofhandler::DH
@@ -51,6 +80,35 @@ end
 #
 
 # Constructor using input file user defined variables
+"""
+    Model(grid::Grid, variables::PrimitiveVariables, quad_order::Int, quad_type::Symbol, bc::BoundaryConditions, rheology::Rheology, clock::Clock, solver::Solver, multithreading::Bool = false)
+
+`Model` constructor. Keyword arguments can also be used.
+
+# Fields
+- grid::Grid{dim}
+- dofhandler::DH
+- dirichlet_bc::CH
+- neumann_bc::NBC # TODO : use a struct similar to ConstraintHandler may be relevant
+- cellvalues_tuple::CVT
+- facevalues::FV
+- material_properties::Vector{Rheology{Float64,D,V,E,P}}
+- material_state::Vector{Vector{MS}}
+- K::SP
+- RHS::Vector{Float64}
+- clock::C
+- solver::S
+- multithreading::Bool
+
+# Type parameters
+- dim::Int : spatial dimensions of the model
+- N::Int : number of primitives variables. Commonly 1 (displacement) or 2 (displacement and pressure)
+- D::Damage : micromechanical properties of the rheology
+- V::Viscosity : viscous properties of the rheology
+- E::Elasticity : elastic properties of the rheology
+- P::Plasticity : plastic properties of the rheology
+- S::Solver : linear or non linear solver used
+"""
 function Model(grid::Grid, variables::PrimitiveVariables,
                quad_order::Int, quad_type::Symbol,
                bc::BoundaryConditions, rheology::Rheology,

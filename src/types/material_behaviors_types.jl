@@ -1,5 +1,15 @@
 ### BEHAVIORS ###
 # Higher level supertype
+# Keyword argument type
+"""
+`AbstractBehavior` is the abstract supertype of concrete types that contain mechanical properties of the material
+its subtypes are `Damage`, `Viscosity`, `Elasticity` and `Plasticity`.
+
+The concrete subtypes of 
+- `Float64` : gives an homogeneous spatial property to the material
+- `Function` : prescribes a spatialy variable property to the material. The input argument must be a position vector `x`
+               and the the function must return a `Float64
+"""
 abstract type AbstractBehavior{T<:F64orFunc} end
 
 # first order abstract hierarchy
@@ -78,7 +88,7 @@ K_from_Gν(G,ν) = 2G*(1 + ν) / (3*(1 - 2ν))
 # end
 
 """
-`Elasticity` contains elastic properties of a material, including moduli `E`, `ν`, `G`, `K` and `λ`, as well as the associated stiffness tensor `Dᵉ`.
+An `Elasticity` instance contains elastic properties : moduli `E`, `ν`, `G`, `K`, `λ` and the associated stiffness tensor `Dᵉ`.
 """
 @kwdef struct Elasticity{T} <: AbstractBehavior{T}
     E::Maybe(F64orFunc) = nothing
@@ -97,11 +107,6 @@ Elasticity{T}(E,ν,G,K,λ,Dᵉ) where {T} = Elasticity(E,ν,G,K,λ,Dᵉ)
 """
     Elasticity(; <keyword arguments>)
 Construct an `Elasticity` instance by giving a pair of keywords arguments, either `E` and `ν` or `G` and `K`.
-
-# Keyword argument type
-- `Float64` : gives an homogeneous spatial property to the material
-- `Function` : prescribes a spatialy variable property to the material. The input argument must be a position vector `x`
-               and the the function must return a `Float64
 """
 function Elasticity(E::F64orFunc,ν::F64orFunc,G::Nothing,K::Nothing,λ::Nothing,Dᵉ::Nothing)
     if (E isa Function) & (ν isa Function)
@@ -143,7 +148,21 @@ function Base.show(io::IO, ::MIME"text/plain", elast::E) where{E<:Elasticity}
     "\t└── Dᵉ : $(Dᵉ_print)\n")
 end
 
+"""
+`DruckerPrager' type. Its instance contains general plastic properties.
 
+# Fields
+μ : friction coefficient
+ϕ : friction angle
+ψ : dilatancy angle
+C : cohesion
+H : linear hardening modulus
+ηᵛᵖ : Kelvin viscoplastic viscosity
+mohr_coulomb_approx::Symbol : Drucker-Prager approximation to Mohr-Coulomb yield criterion
+η : pressure prefactor of the yield function
+η̅ : pressure prefactor of the plastic flow potential
+ξ : cohesion prefactor of the yield function
+"""
 struct DruckerPrager{T} <: Plasticity{T}
     μ::F64orFunc
     ϕ::F64orFunc
@@ -161,8 +180,25 @@ struct DruckerPrager{T} <: Plasticity{T}
         return new{T2}(μ,ϕ,ψ,C,H,ηᵛᵖ,mohr_coulomb_approx,η, η̅, ξ)
     end
 end
+
+
 DruckerPrager{T}(μ,ϕ,ψ,C,H,ηᵛᵖ,mc_approx) where {T} = DruckerPrager(μ,ϕ,ψ,C,H,ηᵛᵖ,mc_approx)
 DruckerPrager(μ,ϕ,ψ,C,H,ηᵛᵖ,mohr_coulomb_approx,η, η̅, ξ) = DruckerPrager(μ,ϕ,ψ,C,H,ηᵛᵖ,mohr_coulomb_approx)
+
+"""
+    DruckerPrager(; <keyword arguments>)
+
+Construct an `DruckerPrager` instance. At least `μ` or `ϕ` have to be given, other parameters are optional.
+
+# Keyword arguments
+μ : friction coefficient
+ϕ : friction angle
+ψ = ϕ : dilatancy angle
+C = 0.0 : cohesion
+H = 0.0 : linear hardening modulus
+ηᵛᵖ = 0.0 : Kelvin viscoplastic viscosity
+mohr_coulomb_approx = :planestrain : Drucker-Prager approximation to Mohr-Coulomb yield criterion
+"""
 DruckerPrager(; μ=nothing, ϕ=nothing, ψ=nothing,C=0.0,H=0.0,ηᵛᵖ=0.0,mc_approx=:planestrain) = DruckerPrager(μ,ϕ,ψ,C,H,ηᵛᵖ,mc_approx)
 
 # Default case returns an error
