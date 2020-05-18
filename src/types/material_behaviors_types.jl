@@ -2,39 +2,40 @@
 # Higher level supertype
 # Keyword argument type
 """
-`AbstractBehavior` is the abstract supertype of concrete types that contain mechanical properties of the material
-its subtypes are `Damage`, `Viscosity`, `Elasticity` and `Plasticity`.
+`AbstractBehavior` is the abstract supertype of concrete types that contain mechanical properties of the material.
+Its subtypes are `Damage`, `Viscosity`, `Elasticity` and `Plasticity`.
 
-The concrete subtypes of 
-- `Float64` : gives an homogeneous spatial property to the material
-- `Function` : prescribes a spatialy variable property to the material. The input argument must be a position vector `x`
-               and the the function must return a `Float64
+These concrete subtypes can be defined with functional fields of a position vector in order to create a rheology that can vary over space, or with a float scalar if the property is constant in space.
+This variability or constantness attribute is expressed via the type parameter of `AbstractBehavior` concrete subtypes like `Elasticity{T}` where T can be `Function` or `Float64`. This `Function` type parameter allows the construction of an array containing a `Rheology{Float64}` for each cell with the right scalar properties depending on the cell location.
 """
 abstract type AbstractBehavior{T<:F64orFunc} end
 
 # first order abstract hierarchy
 abstract type Damage{T} <: AbstractBehavior{T} end
-abstract type Viscosity{T} <: AbstractBehavior{T} end
 abstract type Plasticity{T} <: AbstractBehavior{T} end
 
 # second order abstract hierarchy
 #abstract type ViscoPlasticity{T} <: Plasticity{T} end
 
-
-
-# elastic moduli relations :
-E_from_Gν(G,ν) = 2G*(1 + ν)
-E_from_KG(K,G) = 9*K*G / (3K + G)
-ν_from_KG(K,G) = (3K - 2G) / (2*(3K + G))
-G_from_Eν(E,ν) = E / 2(1 + ν)
-G_from_Kν(K,ν) = 3K*(1 - 2ν) / (2*(1+ν))
-G_from_λν(λ,ν) = λ*(1 - 2ν) / (2ν)
-G_from_EK(E,K) = 3K*E / (9K - E)
-K_from_Eν(E,ν) = E / 3(1 - 2ν)
-K_from_Gν(G,ν) = 2G*(1 + ν) / (3*(1 - 2ν))
-λ_from_Eν(E,ν) = E*ν / ((1+ν)*(1-2ν))
-λ_from_KG(K,G) = K - (2/3)*G
-λ_from_Gν(G,ν) = 2G*ν / (1 - 2ν)
+### VISCOSITY ###
+"""
+A `Viscosity` instance contains a viscosity `η`.
+"""
+@kwdef struct Viscosity{T,T1} <: AbstractBehavior{T}
+    η::T1
+    function Viscosity(η)
+        if η isa Function
+            T = Function
+        elseif η isa AbstractFloat
+            T = typeof(η)
+        else
+            T = Float64
+            η = Float64(η)
+        end
+        new{T,typeof(η)}(η)
+    end
+end
+Viscosity{T,T1}(η) where {T,T1} = Viscosity(η)
 
 ## Elastic concrete types :
 # @kwdef struct IncompressibleElasticity{T} <: Elasticity{T}
@@ -90,19 +91,19 @@ K_from_Gν(G,ν) = 2G*(1 + ν) / (3*(1 - 2ν))
 """
 An `Elasticity` instance contains elastic properties : moduli `E`, `ν`, `G`, `K`, `λ` and the associated stiffness tensor `Dᵉ`.
 """
-@kwdef struct Elasticity{T} <: AbstractBehavior{T}
-    E::Maybe(F64orFunc) = nothing
-    ν::Maybe(F64orFunc) = nothing
-    G::Maybe(F64orFunc) = nothing
-    K::Maybe(F64orFunc) = nothing
-    λ::Maybe(F64orFunc) = nothing
-    Dᵉ::Maybe(Tensor{4,3}) = nothing
+@kwdef struct Elasticity{T,T1,T2,T3,T4,T5,T6} <: AbstractBehavior{T}
+    E::T1 = nothing
+    ν::T2 = nothing
+    G::T3 = nothing
+    K::T4 = nothing
+    λ::T5 = nothing
+    Dᵉ::T6 = nothing
     function Elasticity(E,ν,G,K,λ,Dᵉ)
-        T2 = any(isa.((E,ν,G,K,λ),Function)) ? Function : Float64
-        new{T2}(E,ν,G,K,λ,Dᵉ)
+        T = any(isa.((E,ν,G,K,λ),Function)) ? Function : Float64
+        new{T,typeof(E),typeof(ν),typeof(G),typeof(K),typeof(λ),typeof(Dᵉ)}(E,ν,G,K,λ,Dᵉ)
     end
 end
-Elasticity{T}(E,ν,G,K,λ,Dᵉ) where {T} = Elasticity(E,ν,G,K,λ,Dᵉ)
+Elasticity{T,T1,T2,T3,T4,T5,T6}(E,ν,G,K,λ,Dᵉ) where {T,T1,T2,T3,T4,T5,T6} = Elasticity(E,ν,G,K,λ,Dᵉ)
 
 """
     Elasticity(; <keyword arguments>)
@@ -163,26 +164,26 @@ mohr_coulomb_approx::Symbol : Drucker-Prager approximation to Mohr-Coulomb yield
 η̅ : pressure prefactor of the plastic flow potential
 ξ : cohesion prefactor of the yield function
 """
-struct DruckerPrager{T} <: Plasticity{T}
-    μ::F64orFunc
-    ϕ::F64orFunc
-    ψ::F64orFunc
-    C::F64orFunc
-    H::F64orFunc
-    ηᵛᵖ::F64orFunc
-    mohr_coulomb_approx::Symbol
-    η::F64orFunc
-    η̅::F64orFunc
-    ξ::F64orFunc
+struct DruckerPrager{T,T1,T2,T3,T4,T5,T6,T7,T8,T9,T10} <: Plasticity{T}
+    μ::T1
+    ϕ::T2
+    ψ::T3
+    C::T4
+    H::T5
+    ηᵛᵖ::T6
+    mohr_coulomb_approx::T7
+    η::T8
+    η̅::T9
+    ξ::T10
     function DruckerPrager(μ,ϕ,ψ,C,H,ηᵛᵖ,mohr_coulomb_approx)
-        T2 = any(isa.((μ,ϕ,ψ,C,H,ηᵛᵖ),Function)) ? Function : Float64
+        T = any(isa.((μ,ϕ,ψ,C,H,ηᵛᵖ),Function)) ? Function : Float64
         η, η̅, ξ = mohr_coulomb_approx_params(mohr_coulomb_approx, ϕ, ψ)
-        return new{T2}(μ,ϕ,ψ,C,H,ηᵛᵖ,mohr_coulomb_approx,η, η̅, ξ)
+        return new{T,typeof(μ),typeof(ϕ),typeof(ψ),typeof(C),typeof(H),typeof(ηᵛᵖ),typeof(mohr_coulomb_approx),typeof(η), typeof(η̅), typeof(ξ)}(μ,ϕ,ψ,C,H,ηᵛᵖ,mohr_coulomb_approx,η, η̅, ξ)
     end
 end
 
 
-DruckerPrager{T}(μ,ϕ,ψ,C,H,ηᵛᵖ,mc_approx) where {T} = DruckerPrager(μ,ϕ,ψ,C,H,ηᵛᵖ,mc_approx)
+DruckerPrager{T,T1,T2,T3,T4,T5,T6,T7}(μ,ϕ,ψ,C,H,ηᵛᵖ,mc_approx) where {T,T1,T2,T3,T4,T5,T6,T7} = DruckerPrager(μ,ϕ,ψ,C,H,ηᵛᵖ,mc_approx)
 DruckerPrager(μ,ϕ,ψ,C,H,ηᵛᵖ,mohr_coulomb_approx,η, η̅, ξ) = DruckerPrager(μ,ϕ,ψ,C,H,ηᵛᵖ,mohr_coulomb_approx)
 
 """
@@ -273,14 +274,14 @@ end
 # ViscoDruckerPrager{T}(μ,ϕ,ψ,C,H,ηᵛᵖ) where {T} = ViscoDruckerPrager(μ,ϕ,ψ,C,H,ηᵛᵖ)
 
 
-@kwdef mutable struct VonMises{T} <: Plasticity{T}
-    C::F64orFunc
+@kwdef mutable struct VonMises{T,T1} <: Plasticity{T}
+    C::T1
     function VonMises(C)
-        T2 = isa(C,Function) ? Function : typeof(C)
-        new{T2}(C)
+        T = isa(C,Function) ? Function : typeof(C)
+        new{T,typeof(C)}(C)
     end
 end
-VonMises{T}(C) where {T} = VonMises(C)
+VonMises{T,T1}(C) where {T,T1} = VonMises(C)
 
 function Base.show(io::IO, ::MIME"text/plain",
                    plast::VonMises)
@@ -311,7 +312,9 @@ BRSDamage{T}(μ,β,K₁c,a,ψ,D₀,n,l̇₀,H,A) where {T} = BRSDamage(μ,β,K�
 
 
 ## UPDATE PARAMETERS :
-
+function updatetypeparameter(::Viscosity,p)
+    return Viscosity(p...)
+end
 function updatetypeparameter(::Elasticity,p)
     return Elasticity(p...)
 end

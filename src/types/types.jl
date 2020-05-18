@@ -45,6 +45,25 @@ end
 end
 BoundaryConditions(::Nothing,::Dict) = @error "A minimal set of Dirichlet boundary conditions must be provided in order to prevent rigid motion of the material"
 
+### BODY FORCES ###
+struct BodyForces{T}
+    components::T
+    function BodyForces(c::T) where {T}
+        if T <: AbstractVector
+            dim = length(c)
+            if T <: Vector
+                c = Vec{dim}(c)
+                new{typeof(c)}(c)
+            elseif T <: Tensor
+                return new{T}(c)
+            end
+        elseif T <: Function
+            return new{T}(c)
+        else
+            @error "wrong field type. Must be an AbstractVector"
+        end
+    end
+end
 
 # other types :
 

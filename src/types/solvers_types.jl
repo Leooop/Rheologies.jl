@@ -3,12 +3,21 @@ abstract type Solver end
 abstract type LinearSolver <: Solver end
 abstract type NonLinearSolver <: Solver end
 
-struct BackslashSolver <: LinearSolver end
+abstract type DirectSolver <: LinearSolver end
 
-@kwdef struct ConjugateGradient <: LinearSolver
+struct BackslashSolver <: DirectSolver end # single core direct solver
+struct MUMPS <: DirectSolver end # multicore sparse direct solver
+
+@kwdef struct ConjugateGradients <: LinearSolver
     package::Symbol
-    max_iter::Int = 1000
+    kwargs::NamedTuple = NamedTuple()
 end
+
+@kwdef struct MINRES <: LinearSolver
+    package::Symbol
+    kwargs::NamedTuple = NamedTuple()
+end
+
 
 @kwdef struct NewtonRaphson <: NonLinearSolver
     atol::Float64 = 1e-4 # absolute residual norm tolerance

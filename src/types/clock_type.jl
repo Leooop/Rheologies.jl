@@ -8,7 +8,7 @@
 - `iter`::Int : iteration number
 - `Δt_max`::Float64 : maximum timestep
 - `Δt`::Float64 : timestep
-- `time_vec`::Vector{Float64} : vector containing times for each iteration 
+- `time_vec`::Vector{Float64} : vector containing times for each iteration
 - `variable_Δt`::Bool : controls the ability to adapt the timestep
 - `Δt_fact_up`::Float64 : timestep increase factor
 - `Δt_fact_down`::Float64 : timestep decrease factor
@@ -25,8 +25,9 @@ mutable struct Clock
     Δt_fact_down::Float64 # timestep decrease factor
     function Clock(tspan,Δt_max,Δt,variable_Δt,Δt_fact_up,Δt_fact_down)
         current_time = float(tspan[1])
-        iter = 1
+        iter = 0
         time_vec = Float64[tspan[1]]
+        (Δt_max < Δt) && (Δt_max = Δt)
         if variable_Δt == false
             Δt_fact_up = 1.0
             Δt_fact_down = 1.0
@@ -42,7 +43,7 @@ Clock constructor with time span `tspan` and timestep `Δt`.
 
 # Keyword arguments
 - `Δt_max` = 1.0 : maximum Δt
-- `variable_Δt` = true : is the timestep allowed to change 
+- `variable_Δt` = true : is the timestep allowed to change
 - `Δt_fact_up` = 1.5 : timestep increase multiplier
 - `Δt_fact_down` = 0.5 : timestep decrease multiplier
 """
@@ -54,10 +55,10 @@ Clock(tspan, Δt; Δt_max = 1.0, variable_Δt = true, Δt_fact_up = 1.5, Δt_fac
 Clock constructor.
 
 # Keyword arguments
-- `tspan::Tuple` (mandatory) : time span 
+- `tspan::Tuple` (mandatory) : time span
 - `Δt` (mandatory) : timestep
 - `Δt_max` = 1.0 : maximum Δt
-- `variable_Δt` = true : is the timestep allowed to change 
+- `variable_Δt` = true : is the timestep allowed to change
 - `Δt_fact_up` = 1.5 : timestep increase multiplier
 - `Δt_fact_down` = 0.5 : timestep decrease multiplier
 """
@@ -84,10 +85,11 @@ function timestep!(c::Clock)
         c.Δt = c.tspan[2] - c.current_time
         c.current_time = c.tspan[2]
     else
-        c.current_time += c.Δt
+        # don't update first iteration time to start at tspan[1]
+        (c.iter != 0) && (c.current_time += c.Δt)
     end
     c.iter += 1
-    push!(c.time_vec,c.current_time)
+    (c.iter != 0) && push!(c.time_vec,c.current_time)
     return nothing
 end
 
@@ -99,7 +101,7 @@ function undo_timestep!(c::Clock)
 end
 
 function JuAFEM.reinit!(c::Clock)
-    c.iter = 1
+    c.iter = 0
     length(c.time_vec)>=2 && (c.Δt = c.time_vec[2] - c.time_vec[1])
     c.current_time = c.tspan[1]
     c.time_vec = Float64[c.tspan[1]]

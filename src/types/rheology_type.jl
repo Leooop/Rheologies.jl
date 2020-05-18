@@ -1,9 +1,6 @@
 ## RHEOLOGY ###
 
-@kwdef struct Rheology{T<:F64orFunc, D<:Maybe(Damage),
-                   V<:Maybe(Viscosity),
-                   E<:Maybe(Elasticity),
-                   P<:Maybe(Plasticity) }
+@kwdef struct Rheology{T, D, V, E, P}
     damage::D = nothing
     viscosity::V = nothing
     elasticity::E = nothing

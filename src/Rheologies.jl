@@ -18,6 +18,8 @@ module Rheologies
     using LinearAlgebra
     import KrylovMethods
     import IterativeSolvers
+    #import MUMPSjInv
+    #import Preconditioners
 
     include("convenience_functions.jl")
     include("types/types.jl")
@@ -27,14 +29,14 @@ module Rheologies
     include("main.jl")
     include("linear_solve.jl")
     include("nonlinear_iterations.jl")
-    include("assemble/assembling.jl")
+    include("assemble/assemble_global.jl")
 
     # exports #
     # types
     export Model
     export MaterialState, BasicMaterialState, PlasticMaterialState, DamagedPlasticMaterialState
-    export Solver, LinearSolver, NonLinearSolver, BackslashSolver, NewtonRaphson, ConjugateGradient
-    export Rheology, BoundaryConditions, Variables, Clock, PrimitiveVariables
+    export Solver, LinearSolver, NonLinearSolver, BackslashSolver, MUMPS, NewtonRaphson, ConjugateGradients,  MINRES
+    export Rheology, BoundaryConditions, BodyForces, Variables, Clock, PrimitiveVariables
     export Damage
     export Viscosity
     export Elasticity

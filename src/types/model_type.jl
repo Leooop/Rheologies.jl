@@ -2,7 +2,7 @@
 # initialize all JuAFEM objects
 #const CVT = Union{Tuple{CellVectorValues,CellScalarValues},Tuple{CellVectorValues}}
 """
-    Model{dim,N,D,V,E,P,S,MS,CVT,FV,DH,CH,NBC,SP,C}
+    Model{dim,N,D,V,E,P,S,MS,CVT,FV,DH,CH,NBC,BF,SP,C}
 
 A `Model` instance contains all the informations needed to run a simulation.
 Type parameters associated to it are used to dispatch methods with respect to model specificities, especially {dim,N,D,V,E,P,S} (see description below).
@@ -12,6 +12,7 @@ Type parameters associated to it are used to dispatch methods with respect to mo
 - `dofhandler::DH` : JuAFEM.DofHandler instance containing information about primitive variables discretization over the grid
 - `dirichlet_bc::CH` : JuAFEM.ConstraintHandler instance containing dirichlet boundary conditions
 - `neumann_bc::NBC` : dictionnary with `set_names`, `traction(x::Vector)` pairs
+- `body_forces::Vector{BC}` : body forces for every cell
 - `cellvalues_tuple::CVT` : A tuple with as many elements as primitive variables in the model, with each one containing in cell integrations related informations
 - `facevalues::FV` : Same as cellvalues but for tractions integration on faces
 - `material_properties::Vector{Rheology{Float64,D,V,E,P}}` : A Vector of `Rheology`s instance associated to each cell
@@ -31,11 +32,12 @@ Type parameters associated to it are used to dispatch methods with respect to mo
 - `P::Plasticity` : plastic properties of the rheology
 - `S::Solver` : linear or non linear solver used
 """
-struct Model{dim,N,D,V,E,P,S,MS,CVT,FV,DH,CH,NBC,SP,C}
+struct Model{dim,N,D,V,E,P,S,MS,CVT,FV,DH,CH,NBC,BF,SP,C}
     grid::Grid{dim}
     dofhandler::DH
     dirichlet_bc::CH
     neumann_bc::NBC # TODO : use a struct similar to ConstraintHandler may be relevant
+    body_forces::Vector{BF}
     cellvalues_tuple::CVT
     facevalues::FV
     material_properties::Vector{Rheology{Float64,D,V,E,P}}
@@ -49,6 +51,7 @@ struct Model{dim,N,D,V,E,P,S,MS,CVT,FV,DH,CH,NBC,SP,C}
                    dh::DH,
                    dbc::CH,
                    nbc::NBC,
+                   bf::Vector{BF},
                    cv_tuple::CVT,
                    fv::FV,
                    mp::Vector{Rheology{Float64,D,V,E,P}},
@@ -57,10 +60,10 @@ struct Model{dim,N,D,V,E,P,S,MS,CVT,FV,DH,CH,NBC,SP,C}
                    RHS::Vector{Float64},
                    clock::C,
                    solver::S,
-                   multithreading::Bool) where {dim,D,V,E,P,S,MS,CVT,FV,DH,CH,NBC,SP,C}
+                   multithreading::Bool) where {dim,D,V,E,P,S,MS,CVT,FV,DH,CH,NBC,BF,SP,C}
 
         N = length(cv_tuple)
-        return new{dim,N,D,V,E,P,S,MS,CVT,FV,DH,CH,NBC,SP,C}(grid,dh,dbc,nbc,cv_tuple,fv,mp,ms,K,RHS,clock,solver,multithreading)
+        return new{dim,N,D,V,E,P,S,MS,CVT,FV,DH,CH,NBC,BF,SP,C}(grid,dh,dbc,nbc,bf,cv_tuple,fv,mp,ms,K,RHS,clock,solver,multithreading)
     end
 end
 
@@ -81,48 +84,35 @@ end
 
 # Constructor using input file user defined variables
 """
-    Model(grid::Grid, variables::PrimitiveVariables, quad_order::Int, quad_type::Symbol, bc::BoundaryConditions, rheology::Rheology, clock::Clock, solver::Solver, multithreading::Bool = false)
+    Model(grid::Grid, variables::PrimitiveVariables, quad_order::Int, quad_type::Symbol, bc::BoundaryConditions, body_forces::BodyForces, rheology::Rheology, clock::Clock, solver::Solver, multithreading::Bool = false)
 
-`Model` constructor. Keyword arguments can also be used.
+`Model` constructor. Keyword arguments can also be used but all arguments are mandatory.
 
 # Fields
-- grid::Grid{dim}
-- dofhandler::DH
-- dirichlet_bc::CH
-- neumann_bc::NBC # TODO : use a struct similar to ConstraintHandler may be relevant
-- cellvalues_tuple::CVT
-- facevalues::FV
-- material_properties::Vector{Rheology{Float64,D,V,E,P}}
-- material_state::Vector{Vector{MS}}
-- K::SP
-- RHS::Vector{Float64}
-- clock::C
-- solver::S
-- multithreading::Bool
+- `grid::Grid{dim}` : JuAFEM.Grid instance
+- `variables::PrimitiveVariables` : objet containing informations about primitive variables and their interpolation
+- `quad_order::Int` : quadrature order to evaluate the element integrals
+- `quad_type::Symbol` : quadrature type. Can be `:legendre` or `:lobatto`
+- `bc::BoundaryConditions` : contains dictionaries mapping boundary condition functions to sets of nodes/elements/faces.
+- `body_forces::BodyForces` : contains body forces as an homogeneous vectorial quantity or as a function of a space location vector.
+- `rheology::Rheology` : contains material properties
+- `clock::Clock` : `Clock` instance containing all time related informations
+- `solver::Solver` : `Solver` subtype instance containing informations about the solving procedure
+- `multithreading::Bool` : `True` to use multithreaded assembly
 
-# Type parameters
-- dim::Int : spatial dimensions of the model
-- N::Int : number of primitives variables. Commonly 1 (displacement) or 2 (displacement and pressure)
-- D::Damage : micromechanical properties of the rheology
-- V::Viscosity : viscous properties of the rheology
-- E::Elasticity : elastic properties of the rheology
-- P::Plasticity : plastic properties of the rheology
-- S::Solver : linear or non linear solver used
 """
 function Model(grid::Grid, variables::PrimitiveVariables,
                quad_order::Int, quad_type::Symbol,
-               bc::BoundaryConditions, rheology::Rheology,
+               bc::BoundaryConditions, body_forces::BodyForces, rheology::Rheology,
                clock::Clock, solver::Solver, multithreading)
 
-    dh, dbc, cv_tuple, fv, mp, ms, K, RHS = setup_model(grid::Grid, variables::PrimitiveVariables,
-                                           quad_order::Int, quad_type::Symbol,
-                                           bc::BoundaryConditions, rheology::Rheology)
+    dh, dbc, cv_tuple, fv, mp, ms, bf, K, RHS = setup_model(grid, variables, quad_order, quad_type,bc, body_forces, rheology)
     nbc = bc.neumann
-    return Model(grid,dh,dbc,nbc,cv_tuple,fv,mp,ms,K,RHS,clock,solver,multithreading)
+    return Model(grid,dh,dbc,nbc,bf,cv_tuple,fv,mp,ms,K,RHS,clock,solver,multithreading)
 end
 
-Model(; grid, variables, quad_order, quad_type, bc, rheology, clock, solver, multithreading = false) =
-         Model(grid, variables, quad_order, quad_type, bc, rheology, clock, solver, multithreading)
+Model(; grid, variables, quad_order, quad_type, bc, body_forces, rheology, clock, solver, multithreading = false) =
+         Model(grid, variables, quad_order, quad_type, bc, body_forces, rheology, clock, solver, multithreading)
 
 # Ask for a non linear solver if rheology is damaged and/or plastic
 # NLRheology = Union{Rheology{T,Nothing,Nothing,E,P} where {T,E,P<:Plasticity},
