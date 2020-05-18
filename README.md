@@ -29,14 +29,13 @@ pkg> add https://github.com/Leooop/Rheologies.jl.git
 ```
 or similarly with
 ```julia
-pkg> using Pkg ; Pkg.add("https://github.com/Leooop/Rheologies.jl.git")
+julia> using Pkg ; Pkg.add("https://github.com/Leooop/Rheologies.jl.git")
 ```
 Requires Julia v1.3 or higher
 
 #### Examples
 
-In addition to these examples, most exported types and functions are documented. Type
-`?function_name` or `?type_name`
+In addition to these examples, most exported types and functions are documented. those can be explored with `?function_name` or `?type_name`
 
 Elasto-plastic 2D plane strain deformation :
 
