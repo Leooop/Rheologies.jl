@@ -24,12 +24,19 @@ A [Julia](http://julialang.org) package for finite element based simulations of 
 #### Installation
 
 `Rheologies` is not a registered package and can be installed from the package REPL with
-```
+```julia
 pkg> add https://github.com/Leooop/Rheologies.jl.git
+```
+or similarly with
+```julia
+pkg> using Pkg ; Pkg.add("https://github.com/Leooop/Rheologies.jl.git")
 ```
 Requires Julia v1.3 or higher
 
-#### Exemple
+#### Examples
+
+In addition to these examples, most exported types and functions are documented. Type
+`?function_name` or `?type_name`
 
 Elasto-plastic 2D plane strain deformation :
 
