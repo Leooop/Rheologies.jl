@@ -35,15 +35,13 @@ Elasto-plastic 2D plane strain deformation :
 
 ```julia
 using Rheologies
-## TIME DOMAIN ##
-clock = Clock(tspan = (0.0,10.0), Δt = 0.5) # in seconds
 
 ## SPATIAL DOMAIN ##
 dim = 2 # spatial dimensions
 
 # rectangular material discretization and geometry
-nx = 40 # n elements along x
-ny = 80 # n elements along y
+nx = 80 # n elements along x
+ny = 160 # n elements along y
 Lx = 0.05 # length along x
 Ly = 0.1 # length along y
 el_geom = Quadrilateral # element geometry (Quadrilateral or Triangle)
@@ -85,14 +83,21 @@ bf = BodyForces([0.0,0.0]) #-9.81*2700
 seed(x,x0,r,val_in::T,val_out::T) where {T<:Real} = (sqrt((x[1]-x0[1])^2 + (x[2]-x0[2])^2) <= r ?
                                    val_in : val_out)
 
-elas = Elasticity(E = x -> seed(x,Vec(Lx/2,Ly/2),Lx/nx,30e9,70e9),
+elas = Elasticity(E = x -> seed(x,Vec(Lx/2,Ly/2),2Lx/nx,30e9,70e9),
                   ν = 0.3)
 
+Δσ = 2e4
 plas  = DruckerPrager(ϕ = 30.0,
-                      C = 1e6)
+                      C = 1e6,
+                      H = -5e7,
+                      ηᵛᵖ = Δσ*Ly/(2*v_in) )
 
-rheology = Rheology(elasticity = elast,
+rheology = Rheology(elasticity = elas,
                     plasticity = plas)
+
+
+## TIME DOMAIN ##
+clock = Clock(tspan = (0.0,20.0), Δt = 2) # in seconds
 
 ### SOLVER ###
 # Use Newton Raphson non linear iterations
@@ -104,8 +109,8 @@ model = Model( grid = grid,
                quad_order = quad_order,
                quad_type = quad_type,
                bc = bc,
-               body_forces = bf
-               rheology = elastoplastic_rheology,
+               body_forces = bf,
+               rheology = rheology,
                clock = clock,
                solver = nlsolver )
 
@@ -118,6 +123,10 @@ path = "path/to/folder"
 outputs = Dict( :σxx     => (r,s)-> s.σ[1,1],
                 :σyy     => (r,s)-> s.σ[2,2],
                 :σzz     => (r,s)-> s.σ[3,3],
+                :ϵxx     => (r,s)-> s.ϵ[1,1],
+                :ϵyy     => (r,s)-> s.ϵ[2,2],
+                :ϵzz     => (r,s)-> s.ϵ[3,3],
+                :ϵ_dev_inv2 => (r,s) -> sqrt(dev(s.ϵ)⊡dev(s.ϵ)),
                 :acum_ep => (r,s)-> s.ϵ̅ᵖ )
 
 ow = VTKOutputWriter(model, path, outputs, interval = 1) # every `interval` iteration (can also be every `frequency` seconds if `frequency` keyword is used instead)
@@ -125,6 +134,8 @@ ow = VTKOutputWriter(model, path, outputs, interval = 1) # every `interval` iter
 ### SOLVE ###
 @time model_sol, u = solve(model ; output_writer = ow, log = true) # log enables a performance evaluation of the simulation
  ```
+![second deviatoric strain invariant](https://github.com/Leooop/Rheologies.jl/blob/master/sample_pic.png)
+
 
 Visco-elasto-plastic 2D plane strain simulation of pre-weakened faulting in the upper crust (high viscosity) overlying lower crust (lower viscosity)
 
@@ -238,4 +249,4 @@ VEP_ow = VTKOutputWriter(VEP_model, path, VEP_outputs, interval = 1)
 
  ```
 
-![Image description](https://github.com/Leooop/Rheologies.jl/blob/master/ep_pic.png)
+![accumulated plastic strain and displacement field](https://github.com/Leooop/Rheologies.jl/blob/master/ep_pic.png)
