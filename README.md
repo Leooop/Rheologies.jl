@@ -34,6 +34,7 @@ Requires Julia v1.3 or higher
 Elasto-plastic 2D plane strain deformation :
 
 ```julia
+using Rheologies
 ## TIME DOMAIN ##
 clock = Clock(tspan = (0.0,10.0), Δt = 0.5) # in seconds
 
@@ -120,3 +121,117 @@ ow = VTKOutputWriter(model, path, outputs, interval = 1) # every `interval` iter
 ### SOLVE ###
 @time model_sol, u = solve(model ; output_writer = ow, log = true) # log enables a performance evaluation of the simulation
  ```
+
+Visco-elasto-plastic 2D plane strain simulation of pre-weakened faulting in the upper crust (high viscosity) overlying lower crust (lower viscosity)
+
+```julia
+using Rheologies
+
+## SPATIAL DOMAIN ##
+dim = 2 # spatial dimensions
+
+nx = 240 # n elements along x
+ny = 160 # n elements along y
+Lx = 30e3
+Ly = 20e3
+el_geom = Quadrilateral # Quadrilateral or Triangle, equivalent to Cell{dim,nnodes,nfaces}
+
+# generate the grid and sets:
+grid = generate_grid(el_geom, (nx, ny), Vec(0.0,-Ly), Vec(Lx,0.0)) # can take 2 or 4 corners
+# Add facesets / nodesets / cellsets on which bc will be applied (except for the top, bottom, left and right boundary that are implemented by default)
+#addnodeset!(grid, "clamped", x -> (x[1] == corner_u[1] && 24.5<x[2]<=25.5));
+addnodeset!(grid, "clamped", x -> ( (x[1] in (0.0, Lx)) & (x[2] == 0.0) ) );
+
+
+## VARIABLES AND INTERPOLATIONS
+variables = PrimitiveVariables{1}((:u,), (2,), el_geom)
+#variables = PrimitiveVariables{2}((:u,:p), (2,1), el_geom) # not good !!!!
+
+quad_order = 2
+quad_type = :legendre # or :lobatto
+
+## BOUNDARY CONDITIONS ##
+# DIRICHLET :
+# KEY : set on which to apply bc
+# VALUES :
+# 1) constrained variable
+# 2) constraint function of (x,t)
+# 3) constrained components
+# NEUMANN :
+# KEY : set on which to apply bc
+# VALUES : traction as a function of (x,t)
+year = 3600*24*365.0
+v_in = 0.01/year # 1cm/year
+bc = BoundaryConditions(dirichlet = Dict("left" => [:u, (x,t)-> -v_in*t, 1],
+                                         "right" => [:u, (x,t)-> v_in*t, 1],
+                                         "clamped" => [:u, (x,t)-> 0.0, 2]),
+                        neumann   = nothing)#Dict("top" => (x,t)->Vec(0.0,-1e5),
+                                         #"bottom" => (x,t)->Vec(0.0,1e5)) )
+
+bf = BodyForces([0.0,0.0])#-9.81*2700])
+
+## MATERIAL RHEOLOGY :
+
+# define a rheology distribution function ...
+function fault2D(x,x0,angle,y_dist,y_max,val_in,val_out)
+    if (abs(x[2] + (x0-x[1])*tand(angle)) <= y_dist) & (x[2] >= y_max)
+        return val_in
+    else
+        return val_out
+    end
+end
+fault2D(x,val_in,val_out) = fault2D(x,5Lx/8,60.0,Ly/ny,-Ly/2,val_in,val_out)
+
+# and use it ...
+elas = Elasticity(E = 70e9,
+                  ν = 0.3)
+
+visco = Viscosity(η = x -> x[2] >= -Ly/2 ? 1e24 : 1e19)
+
+Δσ = 1e3#2e4
+plas  = DruckerPrager(ϕ = 30.0,
+                      C = x->fault2D(x,1e5,1.5e5),
+                      H = x->fault2D(x,-1e7,0.0),
+                      ηᵛᵖ = Δσ*Lx/(2*v_in) )
+
+VEP_rheology = Rheology(viscosity = visco,
+                        elasticity = elas,
+                        plasticity = plas )
+
+### CLOCK ###
+clock = Clock(tspan = (0.0,20year), Δt = 1year, Δt_max = 20year)
+
+### SOLVER ###
+linsolver = BackslashSolver()
+nlsolver = NewtonRaphson(max_iter_number = 20, atol = 1e-2, linear_solver = linsolver)
+
+
+### MODEL ###
+VEP_model = Model( grid = grid,
+                   variables = variables,
+                   quad_order = quad_order,
+                   quad_type = quad_type,
+                   bc = bc,
+                   body_forces = bf,
+                   rheology = VEP_rheology,
+                   clock = clock,
+                   solver = nlsolver )
+
+### OUTPUT ###
+path = "path/to/folder"
+VEP_outputs = Dict( :σxx     => (r,s)-> s.σ[1,1],
+                    :σyy     => (r,s)-> s.σ[2,2],
+                    :σzz     => (r,s)-> s.σ[3,3],
+                    :acum_ep => (r,s)-> s.ϵ̅ᵖ,
+                    :η => (r,s)-> r.viscosity.η,
+                    :C => (r,s)-> r.plasticity.C,
+                    :E => (r,s)-> r.elasticity.E )
+
+VEP_ow = VTKOutputWriter(VEP_model, path, VEP_outputs, interval = 1)
+
+### SOLVE ###
+@time modelsol, u = solve(VEP_model, output_writer = VEP_ow ,log = true);
+
+ ```
+
+![Image description](https://github.com/Leooop/Rheologies.jl/blob/master/ep_pic.pdf)

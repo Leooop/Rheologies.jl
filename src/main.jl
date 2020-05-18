@@ -19,7 +19,7 @@ function solve(model::Model; output_writer = nothing, log = false)
 end
 
 
-function iterate(model::Model{2,N,Nothing,Nothing,E,Nothing}, output_writer) where {N,E}
+function iterate(model::Model{2,N,Nothing,Nothing,E,Nothing}, output_writer) where {N,E<:Elasticity}
     @info "Rheology is purely elastic. Displacement field is solved once at the end of the requested time interval"
     c = model.clock
     c.current_time = c.tspan[2]
@@ -47,7 +47,7 @@ function iterate(model::Model{2,N,Nothing,Nothing,E,Nothing}, output_writer) whe
     return u
 end
 
-function iterate(model::Model{2,1,Nothing,Nothing,E,P}, output_writer) where {E<:Elasticity,P<:Plasticity}
+function iterate(model::Model{2,N,Nothing,V,E,P}, output_writer) where {N,V,E,P}
 
     # Unpack some model fields
     dh, dbc, cv, clock = model.dofhandler, model.dirichlet_bc, model.cellvalues_tuple, model.clock
@@ -58,33 +58,39 @@ function iterate(model::Model{2,1,Nothing,Nothing,E,P}, output_writer) where {E<
     u_converged = copy(u) # backup solution vector
     δu = zeros(n_dofs)  # displacement correction
 
-    @timeit "time iteration" while clock.current_time <= clock.tspan[2]
+    while clock.current_time <= clock.tspan[2]
+        @timeit "time iteration" begin
 
-        print("\n TIME ITERATION $(clock.iter)\n",
-        " current simulation time = $(clock.current_time):\n",
-        " timestep = $(clock.Δt)\n")
+            timestep!(clock) # update clock
 
-        restart_flag = false
+            print("\n TIME ITERATION $(clock.iter)\n",
+            " current simulation time = $(clock.current_time):\n",
+            " timestep = $(clock.Δt)\n")
 
-        # Apply dirichlet bc and iteratively solve for u :
-        restart_flag = nonlinear_solve!(u,δu,model,restart_flag)
+            restart_flag = false
 
-        if restart_flag == true
-            u .= u_converged
-            undo_timestep!(clock)
-            clock.Δt *= clock.Δt_fact_down # decreased timestep
-        else # converged
-            update_material_state!(model) # update converged state values
-            @timeit "export" write_output!(model, u, output_writer) # output
+            # Apply dirichlet bc and iteratively solve for u :
+            @timeit "nonlinear solve" restart_flag = nonlinear_solve!(u,δu,model,restart_flag)
+
+            if restart_flag == true
+                u .= u_converged
+                undo_timestep!(clock)
+                clock.Δt *= clock.Δt_fact_down # decreased timestep
+            else # converged
+                update_material_state!(model) # update converged state values
+                @timeit "export" write_output!(model, u, output_writer) # output
+            end
+
+            clock.current_time == clock.tspan[2] && break # end time loop if requested end time is reached
+
         end
-
-        clock.current_time == clock.tspan[2] && break # end time loop if requested end time is reached
-        timestep!(clock) # update clock for next time iteration
     end
     return u
 end
-iterate(model::Model{2,1,D,Nothing,E,Nothing}, output_writer) where {D<:Damage,E<:Elasticity} = iterate(model::Model{2,1,Nothing,Nothing,E,P}, output_writer) where {E<:Elasticity,P<:Plasticity}
-
+# iterate(model::Model{2,1,Nothing,Nothing,E,P}, output_writer) where {E<:Elasticity,P<:Plasticity} = iterate(model::Model{2,1,Nothing,V,E,P}, output_writer) where {V,E,P}
+# iterate(model::Model{2,1,D,Nothing,E,Nothing}, output_writer) where {D<:Damage,E<:Elasticity} = iterate(model::Model{2,1,Nothing,V,E,P}, output_writer) where {V,E,P}
+# iterate(model::Model{2,1,D,Nothing,E,P}, output_writer) where {D<:Damage,E<:Elasticity,P<:Plasticity} = iterate(model::Model{2,1,Nothing,V,E,P}, output_writer) where {V,E,P}
+# iterate(model::Model{2,1,Nothing,V,E,Nothing}, output_writer) where {V<:Viscosity,E<:Elasticity} = iterate(model::Model{2,1,Nothing,V,E,P}, output_writer) where {V,E,P}
 
 
 function fill_state_from_u!(model,u)

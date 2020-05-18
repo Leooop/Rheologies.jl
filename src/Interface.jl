@@ -89,7 +89,7 @@ end
 
 function setup_model(grid::Grid, variables::PrimitiveVariables,
                      quad_order::Int, quad_type::Symbol,
-                     bc_dicts::BoundaryConditions, rheology::Rheology)
+                     bc_dicts::BoundaryConditions, body_forces::BodyForces, rheology::Rheology)
     # get elements geometry
     el_geom = getcelltype(grid)
 
@@ -112,8 +112,9 @@ function setup_model(grid::Grid, variables::PrimitiveVariables,
 
     mp = create_material_properties(grid, rheology)
     ms = create_material_states(rheology,grid,cellvalues[1])
+    bf = create_body_forces_field(grid, body_forces)
 
-    return dh, bcd, cellvalues, facevalues, mp, ms, K, RHS
+    return dh, bcd, cellvalues, facevalues, mp, ms, bf, K, RHS
 end
 
 function get_face_coordinates(cell::CellIterator, face::Int)
@@ -140,6 +141,18 @@ function create_material_properties(grid::Grid{dim}, rheology::Rheology{Function
     end
     return mp
 end
+
+create_body_forces_field(grid::Grid, body_forces::BodyForces{T}) where {T<:Tensor} = fill(body_forces,getncells(grid))
+
+function create_body_forces_field(grid::Grid{dim}, body_forces::BodyForces{T}) where {dim,T<:Function}
+    bf = BodyForces{Float64}[]
+    for cellid in 1:getncells(grid)
+        centroid_x = get_cell_centroid(grid,cellid)
+        push!(bf,body_forces.components(centroid_x))
+    end
+    return bf
+end
+
 
 function create_material_states(r::Rheology{T,Nothing,V,E,Nothing},grid::Grid,cv) where {T,V,E}
     nqp = getnquadpoints(cv)

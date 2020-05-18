@@ -1,6 +1,18 @@
 #### OUTPUT WRITER ####
 abstract type AbstractOutputWriter end
 
+"""
+`VTKOutputWriter` is used to write VTK files.
+
+# Fields
+- `path::String` : path to the folder
+- `outputs::Dict{Symbol,Function}` : dictionary mapping `Symbol`s output names to functions of `r` (rheology) and `s` (state)
+- `frequency::F` : save output every `frequency` seconds
+- `interval::I` : save output every `interval` iterations
+- `data::Dict{Symbol,Vector{Float64}}` : preallocated output data
+- `last_output_time::Float64` : last simulation time where an export occured
+- `opened_path::Bool` : `True` if the folder has already been created
+"""
 mutable struct VTKOutputWriter{F,I} <: AbstractOutputWriter
     path::String
     outputs::Dict{Symbol,Function} # functions of r (rheology) and s (state)
@@ -11,6 +23,20 @@ mutable struct VTKOutputWriter{F,I} <: AbstractOutputWriter
     opened_path::Bool
 end
 
+"""
+    VTKOutputWriter(model, path, outputs ; frequency = nothing, interval = nothing)
+
+`VTKOutputWriter` constructor. One of the two kwargs has to be given.
+
+# Positional arguments
+- `model::Model`
+- `path::String` : path to the folder
+- `outputs::Dict{Symbol,Function}` : dictionary mapping `Symbol`s output names to functions of `r` (rheology) and `s` (state)
+
+# Keyword arguments
+- `frequency::F` : save output every `frequency` seconds
+- `interval::I` : save output every `interval` iterations
+"""
 function VTKOutputWriter(model, path, outputs, frequency, interval)
     ncells = getncells(model.grid)
     data = Dict{Symbol,Vector{Float64}}()
@@ -24,7 +50,7 @@ function VTKOutputWriter(model, path, outputs, frequency, interval)
     end
     return VTKOutputWriter(path, outputs, frequency, interval, data, model.clock.tspan[1], false)
 end
-
+VTKOutputWriter(model, path, outputs, ::Nothing, ::Nothing) = @error "Please provide one of the two kwargs `frequency` or `interval`"
 VTKOutputWriter(model, path, outputs ; frequency = nothing, interval = nothing) = VTKOutputWriter(model, path, outputs, frequency, interval)
 
 function JuAFEM.reinit!(ow::AbstractOutputWriter,model)

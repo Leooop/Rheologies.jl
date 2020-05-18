@@ -1,7 +1,6 @@
 import Statistics.mean
 
-include("elastic_mat.jl")
-include("elastoplastic_mat.jl")
+include("assemble_cell.jl")
 # function doassemble(cellvalues_u::CellVectorValues{dim},
 #                     cellvalues_p::CellScalarValues{dim},
 #                     facevalues_u::FaceVectorValues{dim}, K::SparseMatrixCSC, grid::Grid,
@@ -70,7 +69,7 @@ function doassemble!(model::Model{dim,2,Nothing,Nothing,E,Nothing},nbasefuncs) w
     end
 end
 
-function doassemble!(model::Model{dim,1,Nothing,Nothing,E,P},nbasefuncs, u ; elastic_only = false) where {dim,E,P}
+function doassemble!(model::Model{dim,1,Nothing,V,E,P},nbasefuncs, u ; noplast = false) where {dim,V,E,P}
     assembler = start_assemble(model.K, model.RHS)
 
     # Only one primitive variable here
@@ -88,7 +87,7 @@ function doassemble!(model::Model{dim,1,Nothing,Nothing,E,P},nbasefuncs, u ; ela
         eldofs = celldofs(cell)
         ue = u[eldofs]
 
-        @timeit "assemble cell" assemble_cell!(Ke, re, model, cell, cv, n, ue, elastic_only)
+        @timeit "assemble cell" assemble_cell!(Ke, re, model, cell, cv, n, ue, noplast)
 
         assemble!(assembler, eldofs, re, Ke)
     end
