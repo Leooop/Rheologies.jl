@@ -238,4 +238,4 @@ VEP_ow = VTKOutputWriter(VEP_model, path, VEP_outputs, interval = 1)
 
  ```
 
-![Image description](ep_pic.pdf)
+![Image description](https://github.com/Leooop/Rheologies.jl/blob/master/ep_pic.png)
