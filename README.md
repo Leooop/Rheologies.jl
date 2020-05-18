@@ -78,6 +78,9 @@ bc = BoundaryConditions(dirichlet = Dict("top" => [:u, (x,t)-> -v_in*t, 2],
                                          "clamped" => [:u, (x,t)-> 0.0, 1]),
                         neumann   = nothing)
 
+# BODY FORCES (not stable for now)
+bf = BodyForces([0.0,0.0]) #-9.81*2700
+
 ## MATERIAL RHEOLOGY :
 seed(x,x0,r,val_in::T,val_out::T) where {T<:Real} = (sqrt((x[1]-x0[1])^2 + (x[2]-x0[2])^2) <= r ?
                                    val_in : val_out)
@@ -101,6 +104,7 @@ model = Model( grid = grid,
                quad_order = quad_order,
                quad_type = quad_type,
                bc = bc,
+               body_forces = bf
                rheology = elastoplastic_rheology,
                clock = clock,
                solver = nlsolver )
@@ -234,4 +238,4 @@ VEP_ow = VTKOutputWriter(VEP_model, path, VEP_outputs, interval = 1)
 
  ```
 
-![Image description](https://github.com/Leooop/Rheologies.jl/blob/master/ep_pic.pdf)
+![Image description](ep_pic.pdf)
