@@ -26,11 +26,11 @@ Type parameters associated to it are used to dispatch methods with respect to mo
 # Type parameters
 - `dim::Int` : spatial dimensions of the model
 - `N::Int` : number of primitives variables. Commonly 1 (displacement) or 2 (displacement and pressure)
-- `D::Damage` : micromechanical properties of the rheology
-- `V::Viscosity` : viscous properties of the rheology
-- `E::Elasticity` : elastic properties of the rheology
-- `P::Plasticity` : plastic properties of the rheology
-- `S::Solver` : linear or non linear solver used
+- `D<:Damage` : micromechanical properties of the rheology
+- `V<:Viscosity` : viscous properties of the rheology
+- `E<:Elasticity` : elastic properties of the rheology
+- `P<:Plasticity` : plastic properties of the rheology
+- `S<:AbstractSolver` : linear or non linear solver
 """
 struct Model{dim,N,D,V,E,P,S,MS,CVT,FV,DH,CH,NBC,BF,SP,C}
     grid::Grid{dim}
@@ -97,14 +97,14 @@ end
 - `body_forces::BodyForces` : contains body forces as an homogeneous vectorial quantity or as a function of a space location vector.
 - `rheology::Rheology` : contains material properties
 - `clock::Clock` : `Clock` instance containing all time related informations
-- `solver::Solver` : `Solver` subtype instance containing informations about the solving procedure
+- `solver::AbstractSolver` : `Solver` subtype instance containing informations about the solving procedure
 - `multithreading::Bool` : `True` to use multithreaded assembly
 
 """
 function Model(grid::Grid, variables::PrimitiveVariables,
                quad_order::Int, quad_type::Symbol,
                bc::BoundaryConditions, body_forces::BodyForces, rheology::Rheology,
-               clock::Clock, solver::Solver, multithreading)
+               clock::Clock, solver::AbstractSolver, multithreading)
 
     dh, dbc, cv_tuple, fv, mp, ms, bf, K, RHS = setup_model(grid, variables, quad_order, quad_type,bc, body_forces, rheology)
     nbc = bc.neumann

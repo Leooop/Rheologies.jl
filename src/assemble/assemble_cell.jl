@@ -86,6 +86,8 @@ function assemble_cell!(Ke, re, model::Model{dim,1,Nothing,V,E,P}, cell, cv, n_b
     cell_id = cell.current_cellid.x
     r, states = model.material_properties[cell_id], model.material_state[cell_id]
     bodyforces = model.body_forces[cell_id].components
+    #norm_bodyforces = norm(bodyforces)
+    #unit_bodyforces = bodyforces./norm_bodyforces
 
     # reinit cellvalues
     reinit!(cv, cell)

@@ -16,8 +16,6 @@ module Rheologies
     using StaticArrays
     using StructArrays
     using LinearAlgebra
-    import KrylovMethods
-    import IterativeSolvers
     #import MUMPSjInv
     #import Preconditioners
 
@@ -35,7 +33,7 @@ module Rheologies
     # types
     export Model
     export MaterialState, BasicMaterialState, PlasticMaterialState, DamagedPlasticMaterialState
-    export Solver, LinearSolver, NonLinearSolver, BackslashSolver, MUMPS, NewtonRaphson, ConjugateGradients,  MINRES
+    export AbstractSolver, AbstractLinearSolver, AbstractNonLinearSolver, BackslashSolver, MUMPS, NewtonRaphson, ConjugateGradients,  MINRES, ILU, GMRESIterativeSolvers
     export Rheology, BoundaryConditions, BodyForces, Variables, Clock, PrimitiveVariables
     export Damage
     export Viscosity

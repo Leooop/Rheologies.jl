@@ -1,4 +1,4 @@
-function nonlinear_solve!(u, δu, model::Model{dim,N,D,V,E,P,NewtonRaphson}, restart_flag) where {dim,N,D,V,E,P}
+function nonlinear_solve!(u, δu, model::Model{dim,N,D,V,E,P,S}, restart_flag) where {dim,N,D,V,E,P,S<:AbstractNonLinearSolver}
 
     # Unpack some model fields
     grid, dh, dbc, mp, states, K, res, clock, solver = model.grid, model.dofhandler, model.dirichlet_bc, model.material_properties, model.material_state, model.K, model.RHS, model.clock, model.solver
@@ -63,7 +63,7 @@ function nonlinear_solve!(u, δu, model::Model{dim,N,D,V,E,P,NewtonRaphson}, res
             ### Linear Solve for δu ###
             @timeit "apply_dbc" apply_zero!(K, res, dbc)
             #@timeit "linear_solve" δu .= Symmetric(K) \ -res
-            @timeit "linear_solve" linear_solve!(δu,K,-res,solver.linear_solver)
+            @timeit "linear_solve" δu .= solver.linear_solver(K,-res,model)
             # @timeit "linear_solve" begin
             #     ## TODO better
             #     Pl = Preconditioners.AMGPreconditioner(Symmetric(K))
