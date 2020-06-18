@@ -16,6 +16,12 @@ module Rheologies
     using StaticArrays
     using StructArrays
     using LinearAlgebra
+
+    # Export
+    import FileIO
+    import MAT
+    #using UnicodePlots ## TEMPORARY
+    #using OrdinaryDiffEq
     #import MUMPSjInv
     #import Preconditioners
 
@@ -40,7 +46,7 @@ module Rheologies
     export Elasticity
     export Plasticity, DruckerPrager, VonMises
     export Damage, BRSDamage
-    export VTKOutputWriter
+    export OutputWriter, VTKOutputWriter, JLD2OutputWriter, MATOutputWriter, MixedOutputWriter
 
     # functions
     export solve, setup_model, create_material_properties

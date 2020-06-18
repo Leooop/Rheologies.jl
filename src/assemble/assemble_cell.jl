@@ -81,7 +81,7 @@ end
 
 
 ## ELASTO-VISCO-PLASTIC ##
-function assemble_cell!(Ke, re, model::Model{dim,1,Nothing,V,E,P}, cell, cv, n_basefuncs, ue, noplast = false) where {dim,V,E,P}
+function assemble_cell!(Ke, re, model::Model{dim,1,TD,V,E,P}, cell, cv, n_basefuncs, ue, noplast = false) where {dim,TD,V,E,P}
     # unpack
     cell_id = cell.current_cellid.x
     r, states = model.material_properties[cell_id], model.material_state[cell_id]
@@ -97,7 +97,8 @@ function assemble_cell!(Ke, re, model::Model{dim,1,Nothing,V,E,P}, cell, cv, n_b
         ϵ2D = function_symmetric_gradient(cv, q_point, ue)
         # Total strain recomputed each time because of the newton correction
         ϵ = SymmetricTensor{2,3}((i,j)->get_3D_func(i,j,ϵ2D))
-        @timeit "tangent computation" σ, D = compute_stress_tangent(ϵ, r, states[q_point], model.clock, noplast = noplast)
+        # @timeit "tangent computation"
+        σ, C = compute_stress_tangent(ϵ, r, states[q_point], model.clock, noplast = noplast)
         dΩ = getdetJdV(cv, q_point)
         for i in 1:n_basefuncs #TODO change loops order
             δϵ2D = shape_symmetric_gradient(cv, q_point, i)
@@ -107,7 +108,7 @@ function assemble_cell!(Ke, re, model::Model{dim,1,Nothing,V,E,P}, cell, cv, n_b
             for j in 1:i
                 Δϵ2D = shape_symmetric_gradient(cv, q_point, j)
                 Δϵ = SymmetricTensor{2,3}((i,j)->get_3D_func(i,j,Δϵ2D))
-                Ke[i, j] += δϵ ⊡ D ⊡ Δϵ * dΩ
+                Ke[i, j] += δϵ ⊡ C ⊡ Δϵ * dΩ
             end
         end
     end

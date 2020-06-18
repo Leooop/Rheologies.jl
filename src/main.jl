@@ -5,9 +5,9 @@ function solve(model::Model; output_writer = nothing, log = false)
     (log == false) && disable_timer!()
 
 
-    # Reinitialize clock and output_writer
-    reinit!(model.clock)
-    reinit!(output_writer,model)
+    # Reinitialize clock and output_writer # NO NEED, FORCE LOADING ALL INPUT FILE BEFORE SOLVING
+    #reinit!(model.clock)
+    #reinit!(output_writer,model)
 
     # iterate over time
     u = iterate(model,output_writer)
@@ -47,7 +47,7 @@ function iterate(model::Model{2,N,Nothing,Nothing,E,Nothing}, output_writer) whe
     return u
 end
 
-function iterate(model::Model{2,N,Nothing,V,E,P}, output_writer) where {N,V,E,P}
+function iterate(model::Model{2,N,D,V,E,P}, output_writer) where {N,D,V,E,P}
 
     # Unpack some model fields
     dh, dbc, cv, clock = model.dofhandler, model.dirichlet_bc, model.cellvalues_tuple, model.clock
@@ -70,7 +70,8 @@ function iterate(model::Model{2,N,Nothing,V,E,P}, output_writer) where {N,V,E,P}
             restart_flag = false
 
             # Apply dirichlet bc and iteratively solve for u :
-            @timeit "nonlinear solve" restart_flag = nonlinear_solve!(u,δu,model,restart_flag)
+            # @timeit "nonlinear solve"
+            restart_flag = nonlinear_solve!(u,δu,model,restart_flag)
 
             if restart_flag == true
                 u .= u_converged

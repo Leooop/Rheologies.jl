@@ -104,15 +104,15 @@ end
 function Model(grid::Grid, variables::PrimitiveVariables,
                quad_order::Int, quad_type::Symbol,
                bc::BoundaryConditions, body_forces::BodyForces, rheology::Rheology,
-               clock::Clock, solver::AbstractSolver, multithreading)
+               initial_state, clock::Clock, solver::AbstractSolver, multithreading)
 
-    dh, dbc, cv_tuple, fv, mp, ms, bf, K, RHS = setup_model(grid, variables, quad_order, quad_type,bc, body_forces, rheology)
+    dh, dbc, cv_tuple, fv, mp, ms, bf, K, RHS = setup_model(grid, variables, quad_order, quad_type, bc, body_forces, initial_state, rheology)
     nbc = bc.neumann
     return Model(grid,dh,dbc,nbc,bf,cv_tuple,fv,mp,ms,K,RHS,clock,solver,multithreading)
 end
 
-Model(; grid, variables, quad_order, quad_type, bc, body_forces, rheology, clock, solver, multithreading = false) =
-         Model(grid, variables, quad_order, quad_type, bc, body_forces, rheology, clock, solver, multithreading)
+Model(; grid, variables, quad_order, quad_type, bc, body_forces, rheology, initial_state, clock, solver, multithreading = false) =
+         Model(grid, variables, quad_order, quad_type, bc, body_forces, rheology, initial_state, clock, solver, multithreading)
 
 # Ask for a non linear solver if rheology is damaged and/or plastic
 # NLRheology = Union{Rheology{T,Nothing,Nothing,E,P} where {T,E,P<:Plasticity},

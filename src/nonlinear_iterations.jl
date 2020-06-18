@@ -23,14 +23,26 @@ function nonlinear_solve!(u, δu, model::Model{dim,N,D,V,E,P,S}, restart_flag) w
     newton_itr = -1 # initialize non linear iteration count
     while true; newton_itr += 1
         @timeit "Newton iter" begin
-
-            @timeit "assemble" doassemble!(model::Model{dim,N,D,V,E,P}, nbasefuncs, u ; noplast = (newton_itr == 0))
+            #@timeit "assemble"
+            doassemble!(model::Model{dim,N,D,V,E,P}, nbasefuncs, u ; noplast = (newton_itr == 0))
 
             # compute residual norm
             norm_res = norm(res[JuAFEM.free_dofs(dbc)])
 
             # print current Newton iteration
             print("Iteration: $newton_itr \tresidual: $(@sprintf("%.8f", norm_res))\n")
+
+            #### Max D TEST :
+            if D <: Damage
+                max_ΔD = 0
+                for cell_states in states
+                    cell_temp_D = mean([state.temp_D for state in cell_states])
+                    cell_D = mean([state.D for state in cell_states])
+                    max_ΔD = max(max_ΔD,cell_temp_D - cell_D)
+                end
+                print("\t max ΔD = ", max_ΔD, "\n")
+            end
+            ####
 
             #### EXIT CHECKS ####
             if norm_res < solver.atol

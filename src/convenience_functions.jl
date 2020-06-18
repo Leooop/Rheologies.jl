@@ -19,3 +19,6 @@ K_from_Gν(G,ν) = 2G*(1 + ν) / (3*(1 - 2ν))
 λ_from_Eν(E,ν) = E*ν / ((1+ν)*(1-2ν))
 λ_from_KG(K,G) = K - (2/3)*G
 λ_from_Gν(G,ν) = 2G*ν / (1 - 2ν)
+
+Dᵉ_func(i,j,k,l,G,λ) = λ*(δ(i,j)*δ(k,l)) + G*(δ(i,k)*δ(j,l) + δ(i,l)*δ(j,k))
+get_elastic_stiffness_tensor(G,λ) = SymmetricTensor{4, 3}( (i,j,k,l) -> Dᵉ_func(i,j,k,l,G,λ))

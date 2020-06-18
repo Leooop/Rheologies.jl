@@ -63,7 +63,7 @@ temp_σ : temporary stress tensor
 mutable struct PlasticMaterialState{S} <: MaterialState{S}
     # Store converged values
     ϵᵖ::S # plastic strain
-    ϵ̅ᵖ::Float64 # cumulated plastic strain
+    ϵ̅ᵖ::Float64 # accumulated plastic strain
     ϵ::S # total strain
     σ::S # stress
 
@@ -94,7 +94,7 @@ end
 
 ##### Damaged plastic #####
 """
-`DamagedPlasticMaterialState` is used for damaged visco-elasto-plastic materials. 
+`DamagedPlasticMaterialState` is used for damaged visco-elasto-plastic materials.
 It stores the elastic strains and stresses as well as the plastic strains and the accumulated plastic strain and a damage state variable.
 
 # Fields
@@ -113,14 +113,14 @@ mutable struct DamagedPlasticMaterialState{S} <: MaterialState{S}
     # Store converged values
     D::Float64
     ϵᵖ::S # plastic strain
-    ϵ̅ᵖ::S # cumulated plastic strain
+    ϵ̅ᵖ::Float64 # cumulated plastic strain
     ϵ::S # total strain
     σ::S # stress
 
     # Store temporary values used during equilibrium iterations
     temp_D::Float64
     temp_ϵᵖ::S
-    temp_ϵ̅ᵖ::S
+    temp_ϵ̅ᵖ::Float64
     temp_ϵ::S
     temp_σ::S
 end

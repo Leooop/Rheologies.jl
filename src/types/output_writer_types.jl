@@ -1,19 +1,19 @@
 #### OUTPUT WRITER ####
-abstract type AbstractOutputWriter end
 
 """
-`VTKOutputWriter` is used to write VTK files.
+`OutputWriter` contains information about requested model outputs.
 
 # Fields
+- `format::Symbol` : exported file format. `:VTK`, `:JLD2` or `:MAT`
 - `path::String` : path to the folder
 - `outputs::Dict{Symbol,Function}` : dictionary mapping `Symbol`s output names to functions of `r` (rheology) and `s` (state)
-- `frequency::F` : save output every `frequency` seconds
-- `interval::I` : save output every `interval` iterations
+- `frequency::F` : save output every `frequency` seconds. To disable frequency sampling use `nothing` as field value
+- `interval::I` : save output every `interval` iterations. To disable interval sampling use `nothing` as field value
 - `data::Dict{Symbol,Vector{Float64}}` : preallocated output data
 - `last_output_time::Float64` : last simulation time where an export occured
 - `opened_path::Bool` : `True` if the folder has already been created
 """
-mutable struct VTKOutputWriter{F,I} <: AbstractOutputWriter
+mutable struct OutputWriter{TF,F,I}
     path::String
     outputs::Dict{Symbol,Function} # functions of r (rheology) and s (state)
     frequency::F
@@ -23,12 +23,24 @@ mutable struct VTKOutputWriter{F,I} <: AbstractOutputWriter
     opened_path::Bool
 end
 
-"""
-    VTKOutputWriter(model, path, outputs ; frequency = nothing, interval = nothing)
+# Define aliases for differents file formats
+VTKOutputWriter{F,I} = OutputWriter{:VTK,F,I}
+JLD2OutputWriter{F,I} = OutputWriter{:JLD2,F,I}
+MATOutputWriter{F,I} = OutputWriter{:MAT,F,I}
 
-`VTKOutputWriter` constructor. One of the two kwargs has to be given.
+# Multiple output formats :
+struct MixedOutputWriter{OF1,F1,I1,OF2,F2,I2}
+    ow1::OutputWriter{OF1,F1,I1}
+    ow2::OutputWriter{OF2,F2,I2}
+end
+
+"""
+    OutputWriter(format, model, path, outputs ; frequency = nothing, interval = nothing)
+
+`OutputWriter` constructor. One of the two kwargs has to be given.
 
 # Positional arguments
+- `format::Symbol` : exported file format. `:VTK`, `:JLD2` or `:MAT`
 - `model::Model`
 - `path::String` : path to the folder
 - `outputs::Dict{Symbol,Function}` : dictionary mapping `Symbol`s output names to functions of `r` (rheology) and `s` (state)
@@ -37,7 +49,8 @@ end
 - `frequency::F` : save output every `frequency` seconds
 - `interval::I` : save output every `interval` iterations
 """
-function VTKOutputWriter(model, path, outputs, frequency, interval)
+function OutputWriter(format, model, path, outputs, frequency, interval, force_path)
+
     ncells = getncells(model.grid)
     data = Dict{Symbol,Vector{Float64}}()
     for (key,value) in pairs(outputs)
@@ -48,19 +61,34 @@ function VTKOutputWriter(model, path, outputs, frequency, interval)
     else
         @assert interval isa Nothing
     end
-    return VTKOutputWriter(path, outputs, frequency, interval, data, model.clock.tspan[1], false)
+    TF = typeof(frequency)
+    TI = typeof(interval)
+
+    return OutputWriter{format,TF,TI}(path, outputs, frequency, interval, data, model.clock.tspan[1], force_path)
 end
-VTKOutputWriter(model, path, outputs, ::Nothing, ::Nothing) = @error "Please provide one of the two kwargs `frequency` or `interval`"
-VTKOutputWriter(model, path, outputs ; frequency = nothing, interval = nothing) = VTKOutputWriter(model, path, outputs, frequency, interval)
+OutputWriter(format, model, path, outputs, ::Nothing, ::Nothing, force_path) = @error "Please provide one of the two kwargs `frequency` or `interval`"
+OutputWriter(format, model, path, outputs ; frequency = nothing, interval = nothing, force_path = true) = OutputWriter(format, model, path, outputs, frequency, interval, force_path)
 
-function JuAFEM.reinit!(ow::AbstractOutputWriter,model)
-    ow.last_output_time = model.clock.tspan[1]
-    ow.opened_path = false
-end
+VTKOutputWriter(model, path, outputs ; frequency = nothing, interval = nothing, force_path = true) = OutputWriter(:VTK, model, path, outputs, frequency, interval, force_path)
+JLD2OutputWriter(model, path, outputs ; frequency = nothing, interval = nothing, force_path = true) = OutputWriter(:JLD2, model, path, outputs, frequency, interval, force_path)
+MATOutputWriter(model, path, outputs ; frequency = nothing, interval = nothing, force_path = true) = OutputWriter(:MAT, model, path, outputs, frequency, interval, force_path)
 
-write_output!(model,::Nothing) = nothing
 
-function write_output!(model, u, ow::VTKOutputWriter{F,I}) where {F,I}
+# NOT NEEDED ANYMORE
+# function JuAFEM.reinit!(ow::OutputWriter,model)
+#     ow.last_output_time = model.clock.tspan[1]
+#     ow.opened_path = false
+# end
+#
+# function JuAFEM.reinit!(mow::MixedOutputWriter,model)
+#     JuAFEM.reinit!(mow.ow1,model)
+#     JuAFEM.reinit!(mow.ow2,model)
+# end
+### write_output! ###
+
+write_output!(model, u, ::Nothing) = nothing
+
+function write_output!(model, u, ow::OutputWriter{TF,F,I}) where {TF,F,I}
     if I <: Real
         ((model.clock.iter-1)%ow.interval != 0) && (return nothing)
     elseif F <: Real
@@ -77,29 +105,30 @@ function write_output!(model, u, ow::VTKOutputWriter{F,I}) where {F,I}
         for state in cell_states
             s = state
             for (key,value) in pairs(ow.outputs)
-                ow.data[key][el] += value(r,s)/4
+                ow.data[key][el] += value(r,s)/4.0
             end
         end
     end
 
-    # export VTK
-    ow.opened_path || create_dir!(ow)
-    iter_path = joinpath(ow.path, "iter_$(model.clock.iter)_time$(model.clock.current_time)")
-    vtk_grid(iter_path, model.dofhandler) do vtkfile
-        vtk_point_data(vtkfile, model.dofhandler, u) # displacement field
-        vtk_point_data(vtkfile, model.dirichlet_bc) # dirichlet boundary conditions
-        for (key,value) in pairs(ow.data)
-            vtk_cell_data(vtkfile, value, string(key))
-        end
-    end
-    println("VTK saved")
+    # path and filename
+    ow.opened_path || create_dir!(ow) # creates a new directory name if exists
+    filename = "iter_$(model.clock.iter)_time_$(model.clock.current_time)"
 
+    # export
+    export_sim(filename, model, u, ow)
+
+    # update outputwriter output time
     ow.last_output_time = model.clock.current_time
 
     return nothing
 end
 
-function create_dir!(ow::AbstractOutputWriter)
+function write_output!(model, u, mixed_ow::MixedOutputWriter)
+    write_output!(model, u, mixed_ow.ow1)
+    write_output!(model, u, mixed_ow.ow2)
+end
+
+function create_dir!(ow::OutputWriter)
     path = ow.path
     if ispath(path)
         if occursin(r"\([0-9]+\)", path[end-4:end])
@@ -121,4 +150,32 @@ function create_dir!(ow::AbstractOutputWriter)
         ow.opened_path = true
         return nothing
     end
+end
+
+function export_sim(filename, model, u, ow::VTKOutputWriter)
+    vtk_grid(joinpath(ow.path, filename), model.dofhandler) do vtkfile
+        vtk_point_data(vtkfile, model.dofhandler, u) # displacement field
+        vtk_point_data(vtkfile, model.dirichlet_bc) # dirichlet boundary conditions
+        for (key,value) in pairs(ow.data)
+            vtk_cell_data(vtkfile, value, string(key))
+        end
+    end
+    println("VTK saved")
+end
+
+function export_sim(filename, model, u, ow::JLD2OutputWriter)
+    ow.data[:u] = u
+    # convert keys from symbols to strings
+    data_dict = Dict(string(k)=>v  for (k,v) in pairs(ow.data))
+    FileIO.save(joinpath(ow.path, filename*".jld2"), data_dict)
+    println("JLD2 saved")
+end
+
+function export_sim(filename, model, u, ow::MATOutputWriter)
+    ow.data[:u] = u
+    # convert keys from symbols to strings
+    data_dict = Dict(string(k)=>v  for (k,v) in pairs(ow.data))
+    save(joinpath(ow.path, filename*".jld2"), data_dict)
+    MAT.matwrite(filename*".mat", data_dict)
+    println("MAT saved")
 end

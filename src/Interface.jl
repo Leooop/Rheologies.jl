@@ -87,9 +87,39 @@ function create_dirichlet_bc(dh::DofHandler, bc_dirichlet::Dict)
     return dbc
 end
 
+# function setup_model_old(grid::Grid, variables::PrimitiveVariables,
+#                      quad_order::Int, quad_type::Symbol,
+#                      bc_dicts::BoundaryConditions, body_forces::BodyForces, rheology::Rheology)
+#     # get elements geometry
+#     el_geom = getcelltype(grid)
+#
+#     # By default geometry interpolation is quadratic only if there are nodes in edges centers.
+#     interp_geom = JuAFEM.default_interpolation(el_geom) #
+#
+#     # quadrature rules
+#     qr, qr_face = get_quadrature_rules(quad_order, quad_type, el_geom)
+#
+#     # Dof handler and setup dirichlet bc
+#     dh = create_dofhandler(grid, variables)
+#     bcd = create_dirichlet_bc(dh, bc_dicts.dirichlet)
+#
+#     # cellvalues
+#     cellvalues, facevalues = create_values(qr, qr_face, interp_geom, variables.interpolations...)
+#
+#     # sparsity pattern
+#     K = create_sparsity_pattern(dh);
+#     RHS = zeros(ndofs(dh))
+#
+#     mp = create_material_properties(grid, rheology)
+#     ms = create_material_states(rheology,grid,cellvalues[1])
+#     bf = create_body_forces_field(grid, body_forces)
+#
+#     return dh, bcd, cellvalues, facevalues, mp, ms, bf, K, RHS
+# end
+
 function setup_model(grid::Grid, variables::PrimitiveVariables,
                      quad_order::Int, quad_type::Symbol,
-                     bc_dicts::BoundaryConditions, body_forces::BodyForces, rheology::Rheology)
+                     bc_dicts::BoundaryConditions, body_forces::BodyForces, initial_state, rheology::Rheology)
     # get elements geometry
     el_geom = getcelltype(grid)
 
@@ -111,7 +141,7 @@ function setup_model(grid::Grid, variables::PrimitiveVariables,
     RHS = zeros(ndofs(dh))
 
     mp = create_material_properties(grid, rheology)
-    ms = create_material_states(rheology,grid,cellvalues[1])
+    ms = create_material_states(mp,grid,cellvalues[1],initial_state)
     bf = create_body_forces_field(grid, body_forces)
 
     return dh, bcd, cellvalues, facevalues, mp, ms, bf, K, RHS
@@ -153,18 +183,115 @@ function create_body_forces_field(grid::Grid{dim}, body_forces::BodyForces{T}) w
     return bf
 end
 
+ms_type(r::Rheology{T,Nothing,V,E,Nothing}) where {T,V<:Viscosity,E<:Elasticity} = BasicMaterialState()
+ms_type(r::Rheology{T,Nothing,V,E,P}) where {T,V,E<:Elasticity, P<:Plasticity} = PlasticMaterialState()
+ms_type(r::Rheology{T,D,V,E,P}) where {T,D<:Damage,V,E<:Elasticity,P} = DamagedPlasticMaterialState(r)
 
-function create_material_states(r::Rheology{T,Nothing,V,E,Nothing},grid::Grid,cv) where {T,V,E}
+# convenience function :
+ms_type(mp) = ms_type(mp[1])
+
+function create_material_states(mp,grid::Grid,cv,::Nothing)
     nqp = getnquadpoints(cv)
-    return [[BasicMaterialState() for _ in 1:nqp] for _ in 1:getncells(grid)]
+    return [[ms_type(mp) for _ in 1:nqp] for _ in 1:getncells(grid)]
 end
-function create_material_states(r::Rheology{T,Nothing,V,E,P},grid::Grid,cv) where {T,V,E,P<:Plasticity}
+
+function create_material_states(mp,grid::Grid,cv,initial_state::Dict)
     nqp = getnquadpoints(cv)
-    return [[PlasticMaterialState() for _ in 1:nqp] for _ in 1:getncells(grid)]
+    ms = Vector{Vector{typeof(ms_type(mp))}}()
+    for cellid in 1:getncells(grid)
+        r = mp[cellid]
+        cell_ms = create_cell_material_states(r,grid,initial_state,cellid,nqp)
+        push!(ms,cell_ms)
+    end
+    return ms
 end
-function create_material_states(r::Rheology{T,D,V,E,P},grid::Grid,cv) where {T,D<:Damage,V,E,P<:Plasticity}
-    nqp = getnquadpoints(cv)
-    return [[DamagedPlasticMaterialState(r) for _ in 1:nqp] for _ in 1:getncells(grid)]
+
+function create_cell_material_states(r,grid,initial_state,cellid,nqp)
+    cell_ms = Vector{typeof(ms_type(r))}(undef,nqp)
+    for qp in 1:nqp
+        cell_ms[qp] = create_qp_material_state(r,grid,initial_state,cellid,qp)
+    end
+    return cell_ms
 end
+
+function create_qp_material_state(r::Rheology{T,Nothing,V,E,Nothing},grid,initial_state,cellid,qp) where {T,V<:Viscosity,E<:Elasticity}
+    for (key, value) in pairs(initial_state)
+        if key in (:ϵ,:σ)
+            if value <: AbstractArray
+                (key == :ϵ) && (ϵ = value[cellid][qp])
+                (key == :σ) && (σ = value[cellid][qp])
+            elseif value <: Function
+                centroid_x = get_cell_centroid(grid,cellid)
+                (key == :ϵ) && (ϵ = value(centroid_x))
+                (key == :σ) && (σ = value(centroid_x))
+            end
+        else
+            @warn "initial state key $key is skipped. Usable keys for $(rheology_summary(r)) rheology are :σ and :ϵ"
+        end
+    end
+    !@isdefined(ϵ) && (ϵ = zero(SymmetricTensor{2, 3}))
+    !@isdefined(σ) && (σ = zero(SymmetricTensor{2, 3}))
+    return BasicMaterialState(ϵ,σ,ϵ,σ)
+end
+
+function create_qp_material_state(r::Rheology{T,Nothing,V,E,P},grid,initial_state,cellid,qp) where {T,V,E<:Elasticity, P<:Plasticity}
+    for (key, value) in pairs(initial_state)
+        if key in (:ϵᵖ,:ϵ̅ᵖ,:ϵ,:σ)
+            if value <: AbstractArray
+                (key == :ϵᵖ) && (ϵᵖ = value[cellid][qp])
+                (key == :ϵ̅ᵖ) && (ϵ̅ᵖ = value[cellid][qp])
+                (key == :ϵ) && (ϵ = value[cellid][qp])
+                (key == :σ) && (σ = value[cellid][qp])
+            elseif value <: Function
+                centroid_x = get_cell_centroid(grid,cellid)
+                (key == :ϵᵖ) && (ϵᵖ = value(centroid_x))
+                (key == :ϵ̅ᵖ) && (ϵ̅ᵖ = value(centroid_x))
+                (key == :ϵ) && (ϵ = value(centroid_x))
+                (key == :σ) && (σ = value(centroid_x))
+            end
+        else
+            @warn "initial state key $key is skipped. Usable keys for $(rheology_summary(r)) rheology are :σ and :ϵ"
+        end
+    end
+    !@isdefined(ϵᵖ) && (ϵᵖ = zero(SymmetricTensor{2, 3}))
+    !@isdefined(ϵ̅ᵖ) && (ϵ̅ᵖ = 0.0)
+    !@isdefined(ϵ) && (ϵ = zero(SymmetricTensor{2, 3}))
+    !@isdefined(σ) && (σ = zero(SymmetricTensor{2, 3}))
+    return PlasticMaterialState(ϵᵖ,ϵ̅ᵖ,ϵ,σ,ϵᵖ,ϵ̅ᵖ,ϵ,σ)
+end
+
+function create_qp_material_state(r::Rheology{T,TD,V,E,P},grid,initial_state,cellid,qp) where {T,TD<:Damage,V,E<:Elasticity,P}
+    for (key, value) in pairs(initial_state)
+        if key in (:D,:ϵᵖ,:ϵ̅ᵖ,:ϵ,:σ)
+            if value <: AbstractArray
+                (key == :D) && (D = value[cellid][qp])
+                (key == :ϵᵖ) && (ϵᵖ = value[cellid][qp])
+                (key == :ϵ̅ᵖ) && (ϵ̅ᵖ = value[cellid][qp])
+                (key == :ϵ) && (ϵ = value[cellid][qp])
+                (key == :σ) && (σ = value[cellid][qp])
+            elseif value <: Function
+                centroid_x = get_cell_centroid(grid,cellid)
+                (key == :D) && (D = value(centroid_x))
+                (key == :ϵᵖ) && (ϵᵖ = value(centroid_x))
+                (key == :ϵ̅ᵖ) && (ϵ̅ᵖ = value(centroid_x))
+                (key == :ϵ) && (ϵ = value(centroid_x))
+                (key == :σ) && (σ = value(centroid_x))
+            end
+        else
+            @warn "initial state key $key is skipped. Usable keys for $(rheology_summary(r)) rheology are :σ and :ϵ"
+        end
+    end
+    if D <= r.damage.D₀
+        @warn "initial damage $D is lower or equal to D₀. Set to (D₀ + 1e-9)"
+        D = r.damage.D₀ + 1e-9
+    end
+    !@isdefined(D) && (D = r.damage.D₀ + 1e-9)
+    !@isdefined(ϵᵖ) && (ϵᵖ = zero(SymmetricTensor{2, 3}))
+    !@isdefined(ϵ̅ᵖ) && (ϵ̅ᵖ = 0.0)
+    !@isdefined(ϵ) && (ϵ = zero(SymmetricTensor{2, 3}))
+    !@isdefined(σ) && (σ = zero(SymmetricTensor{2, 3}))
+    return PlasticMaterialState(D,ϵᵖ,ϵ̅ᵖ,ϵ,σ,D,ϵᵖ,ϵ̅ᵖ,ϵ,σ)
+end
+
 
 gettypeparameters(::Rheology{T,D,V,E,P}) where {T,D,V,E,P} = (T,D,V,E,P)

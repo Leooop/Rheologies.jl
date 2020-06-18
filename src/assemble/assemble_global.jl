@@ -69,7 +69,7 @@ function doassemble!(model::Model{dim,2,Nothing,Nothing,E,Nothing},nbasefuncs) w
     end
 end
 
-function doassemble!(model::Model{dim,1,Nothing,V,E,P},nbasefuncs, u ; noplast = false) where {dim,V,E,P}
+function doassemble!(model::Model{dim,1,D,V,E,P},nbasefuncs, u ; noplast = false) where {dim,D,V,E,P}
     assembler = start_assemble(model.K, model.RHS)
 
     # Only one primitive variable here
@@ -87,7 +87,8 @@ function doassemble!(model::Model{dim,1,Nothing,V,E,P},nbasefuncs, u ; noplast =
         eldofs = celldofs(cell)
         ue = u[eldofs]
 
-        @timeit "assemble cell" assemble_cell!(Ke, re, model, cell, cv, n, ue, noplast)
+        #@timeit "assemble cell" 
+        assemble_cell!(Ke, re, model, cell, cv, n, ue, noplast)
 
         assemble!(assembler, eldofs, re, Ke)
     end
