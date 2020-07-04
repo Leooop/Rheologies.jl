@@ -87,11 +87,79 @@ function doassemble!(model::Model{dim,1,D,V,E,P},nbasefuncs, u ; noplast = false
         eldofs = celldofs(cell)
         ue = u[eldofs]
 
-        #@timeit "assemble cell" 
+        #@timeit "assemble cell"
         assemble_cell!(Ke, re, model, cell, cv, n, ue, noplast)
 
         assemble!(assembler, eldofs, re, Ke)
     end
+end
+
+### individual assembly of res function and derivative K used for linesearch
+function doassemble_res!(model::Model{dim,1,D,V,E,P},nbasefuncs, u ; noplast = false) where {dim,D,V,E,P}
+    assembler = start_assemble(model.K, model.RHS)
+
+    # Only one primitive variable here
+    n = nbasefuncs[1]
+    cv = model.cellvalues_tuple[1]
+
+    # initialize local balance equation terms
+    re = zeros(n) # local force vector
+    Ke = zeros(n,n) # local stiffness matrix
+
+    @inbounds for (i,cell) in enumerate(CellIterator(model.dofhandler))
+        fill!(Ke, 0)
+        fill!(re, 0)
+
+        eldofs = celldofs(cell)
+        ue = u[eldofs]
+
+        #@timeit "assemble cell"
+        assemble_cell!(Ke, re, model, cell, cv, n, ue, noplast)
+
+        assemble!(assembler, eldofs, re, Ke)
+    end
+end
+
+doassemble_K!(model::Model{dim,1,D,V,E,P},nbasefuncs, u ; noplast = false) where {dim,D,V,E,P} = doassemble_K!(model.K, u, model, nbasefuncs ; noplast = false)
+function doassemble_K!(K, u::AbstractVector, cellvalues::CellVectorValues{dim},
+                    facevalues::FaceVectorValues{dim}, grid::Grid,
+                    dh::DofHandler,bcn::Maybe(Dict), mp, states, t; noplast = false) where {dim}
+
+    assembler = start_assemble(K)
+    # Only one primitive variable here
+    n = nbasefuncs[1]
+    cv = getnbasefunctions(cellvalues[1])
+    Ke = zeros(n,n) # local stiffness matrix
+
+    @inbounds for (i,cell) in enumerate(CellIterator(model.dofhandler))
+        fill!(Ke, 0)
+
+        eldofs = celldofs(cell)
+        ue = u[eldofs]
+
+        #@timeit "assemble cell"
+        assemble_cell!(Ke, re, model, cell, cv, n, ue, noplast)
+
+        assemble!(assembler, eldofs, re, Ke)
+    end
+end
+function doassemble_K(K::SparseMatrixCSC, u::AbstractVector, cellvalues::CellVectorValues{dim},
+                    facevalues::FaceVectorValues{dim}, grid::Grid,
+                    dh::DofHandler,bcn::Maybe(Dict), mp, states, t ; elastic_only = false) where {dim}
+    assembler = start_assemble(K)
+    nu = getnbasefunctions(cellvalues)
+    ke = zeros(nu, nu) # element tangent matrix
+
+    @inbounds for (i, cell) in enumerate(CellIterator(dh))
+        state, r = states[i], mp[i]
+        fill!(ke, 0)
+        eldofs = celldofs(cell)
+        ue = u[eldofs]
+        assemble_cell_K!(ke, cell, cellvalues, facevalues, grid, r, bcn,
+                       ue, state, t, nu, elastic_only)
+        assemble!(assembler, eldofs, ke)
+    end
+    return K
 end
 
 function symmetrize_lower!(K)
@@ -110,8 +178,7 @@ Apply traction boundary conditions on the element force vector `fe`. This is don
 Time dependency of the traction function is not allowed for now.
 
 """
-
-function apply_Neumann_bc!(fe, model, cell::CellIterator, n_basefuncs)
+function apply_Neumann_bc!(fe, model, cell::CellIterator, n_basefuncs ; inc_sign = +)
     t = (model.clock isa Clock) ? model.clock.current_time : 0.0
     model.neumann_bc != nothing && @inbounds for face in 1:nfaces(cell)
         if onboundary(cell, face)
@@ -125,7 +192,8 @@ function apply_Neumann_bc!(fe, model, cell::CellIterator, n_basefuncs)
                         dΓ = getdetJdV(model.facevalues, q_point)
                         for i in 1:n_basefuncs
                             δu = shape_value(model.facevalues, q_point, i)
-                            fe[i] += (δu ⋅ face_traction) * dΓ
+                            (inc_sign == +) && (fe[i] += (δu ⋅ face_traction) * dΓ)
+                            (inc_sign == -) && (fe[i] -= (δu ⋅ face_traction) * dΓ)
                         end
                     end
                 end

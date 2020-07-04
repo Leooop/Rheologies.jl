@@ -18,8 +18,8 @@ module Rheologies
     using LinearAlgebra
 
     # Export
-    import FileIO
-    import MAT
+    #import FileIO
+    #import MAT
     #using UnicodePlots ## TEMPORARY
     #using OrdinaryDiffEq
     #import MUMPSjInv

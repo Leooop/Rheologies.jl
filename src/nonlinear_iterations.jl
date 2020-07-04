@@ -3,6 +3,7 @@ function nonlinear_solve!(u, δu, model::Model{dim,N,D,V,E,P,S}, restart_flag) w
     # Unpack some model fields
     grid, dh, dbc, mp, states, K, res, clock, solver = model.grid, model.dofhandler, model.dirichlet_bc, model.material_properties, model.material_state, model.K, model.RHS, model.clock, model.solver
 
+    println("Δt in nlsolve : ", clock.Δt)
 
     # number of base functions per element
     nbasefuncs = getnbasefunctions(model.cellvalues_tuple[1])
@@ -24,8 +25,8 @@ function nonlinear_solve!(u, δu, model::Model{dim,N,D,V,E,P,S}, restart_flag) w
     while true; newton_itr += 1
         @timeit "Newton iter" begin
             #@timeit "assemble"
-            doassemble!(model::Model{dim,N,D,V,E,P}, nbasefuncs, u ; noplast = (newton_itr == 0))
-
+            tt = @elapsed doassemble!(model::Model{dim,N,D,V,E,P}, nbasefuncs, u ; noplast = (newton_itr == 0))
+            println("assemble time : ", tt)
             # compute residual norm
             norm_res = norm(res[JuAFEM.free_dofs(dbc)])
 
@@ -45,8 +46,11 @@ function nonlinear_solve!(u, δu, model::Model{dim,N,D,V,E,P,S}, restart_flag) w
             ####
 
             #### EXIT CHECKS ####
-            if norm_res < solver.atol
+            if (norm_res < solver.atol)
                 break
+            elseif (solver.max_iter_atol > 0) & (newton_itr == solver.max_iter_number) & (norm_res < solver.max_iter_atol)
+                (norm_res >= solver.atol) && @warn("last newton iteration, accepted residual is ",norm_res)
+                break # if
             end
 
             # if too many successive divergence, reset the nonlinear iterations from last time iteration solution u_converged using a lower timestep

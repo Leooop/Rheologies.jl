@@ -1,6 +1,7 @@
 ### PHYSICAL FUNCTIONS ###
 include("RK4_functions.jl")
 # Second invariant of the deviatoric stress tensor :
+get_τ(s ; plas = :DruckerPrager) = sqrt(0.5 * s ⊡ s)
 get_τ(s,::DruckerPrager) = sqrt(0.5 * s ⊡ s)
 get_τ(s,::Damage) = sqrt(0.5 * s ⊡ s)
 get_τ(s,::VonMises) = sqrt(3/2 * s ⊡ s)
@@ -8,14 +9,6 @@ get_τ(s,::VonMises) = sqrt(3/2 * s ⊡ s)
 get_τ(s,r::Rheology) = get_τ(s::AbstractTensor,r.plasticity)
 
 ### Damage functions ###
-function check_KI(r::Rheology, s::MaterialState)
-    c1 = compute_c1(r,D)
-    c2 = compute_c2(r,D)
-    c3 = compute_c3(r,D)
-    A = compute_A(r,c1,c2,c3)
-    B = compute_B(c1,c2,c3)
-    Kᵢ = compute_KI(r::Rheology,σ,τ,A,B)
-end
 
 free_energy_convexity(r,D,A₁,B₁) = 1/compute_Γ(r,A₁,B₁) > 0 ? true : false
 
@@ -31,16 +24,17 @@ end
 compute_c2(d::Damage,D) = (sqrt(1 - cosd(d.ψ)^2)/cosd(d.ψ)^2) * (d.D₀^(2/3)/(1 - D^(2/3)))
 
 function compute_c3(d::Damage,D)
-    @assert cosd(d.ψ) > 0
+    α = cosd(d.ψ)
+    @assert α > 0
     @assert (D/d.D₀) >= 1
-    (2/π)*sqrt(cosd(d.ψ))*((D/d.D₀)^(1/3) - 1)^(1/2)
+    (2sqrt(α)/π)*((D/d.D₀)^(1/3) - 1)^(1/2)
 end
 
 compute_c1(r::Rheology,D) = compute_c1(r.damage,D)
 compute_c2(r::Rheology,D) = compute_c2(r.damage,D)
 compute_c3(r::Rheology,D) = compute_c3(r.damage,D)
 
-function compute_c1c2c3(r::Rheology,D)
+function compute_c1c2c3(r,D)
     c1 = compute_c1(r,D)
     c2 = compute_c2(r,D)
     c3 = compute_c3(r,D)
@@ -48,10 +42,16 @@ function compute_c1c2c3(r::Rheology,D)
 end
 # eq 15 Bhat2012 (A1 : *c2*c3), Perol&Bhat2016 (A1 : ...*c2)*c3):
 # Perol&Bhat2016 is the corrected version, and the one implemented
-compute_A(r::Rheology,c1,c2,c3) = r.damage.μ*c1 + (1 + r.damage.μ*c2)*c3
+compute_A(r::Rheology,c1,c2,c3) = r.damage.μ*c1 + (1.0 + r.damage.μ*c2)*c3
+compute_A(d::Damage,c1,c2,c3) = d.μ*c1 + (1.0 + d.μ*c2)*c3
 compute_B(c1,c2,c3) = c1 + c2*c3
 
 function compute_AB(r::Rheology,c1,c2,c3)
+    A = compute_A(r,c1,c2,c3)
+    B = compute_B(c1,c2,c3)
+    return A, B
+end
+function compute_AB(r,c1,c2,c3)
     A = compute_A(r,c1,c2,c3)
     B = compute_B(c1,c2,c3)
     return A, B
@@ -90,13 +90,21 @@ function compute_KI(r::Rheology,σ,τ,D)
     return (A*σ + B*τ) * sqrt(π*r.damage.a)
 end
 
-function compute_KI(r::Rheology,σ,D)
+function compute_KI(r::Rheology,σij,D)
     c1, c2, c3 = compute_c1c2c3(r,D)
     A, B = compute_AB(r,c1,c2,c3)
-    p = 1/3 * tr(σ) # trial pressure, negative in compression
-    s = dev(σ) # trial deviatoric stress
-    τ = get_τ(s,r.plasticity)
+    p = 1/3 * tr(σij) # trial pressure, negative in compression
+    sij = dev(σij) # trial deviatoric stress
+    τ = get_τ(sij,r.damage)
     return (A*p + B*τ) * sqrt(π*r.damage.a)
+end
+function compute_KI(d::Damage,σij,D)
+    c1, c2, c3 = compute_c1c2c3(d,D)
+    A, B = compute_AB(d,c1,c2,c3)
+    p = 1/3 * tr(σij) # trial pressure, negative in compression
+    sij = dev(σij) # trial deviatoric stress
+    τ = get_τ(sij,d)
+    return (A*p + B*τ) * sqrt(π*d.a)
 end
 
 function compute_Γ(r::Rheology,A₁,B₁)
@@ -207,60 +215,60 @@ function compute_dτdt(r::Rheology,b1,b2,db1dt,db2dt,ϵ,γ,dϵdt,dγdt)
     return r.elasticity.G * (db1dt*ϵ + b1*dϵdt + db2dt*γ + b2*dγdt)
 end
 
-function compute_stress_tangent_damage(ϵ, ϵ_last, r::Rheology, state::MaterialState, clock::Clock, A, B)
-    # unpack some parameters
-    G = r.elasticity.E / (2*(1 + r.elasticity.ν))
-    ν = r.elasticity.ν
-
-    # get strain invariants
-    δϵ = ϵ - ϵ_last
-    ϵᵥ = tr(δϵ) # first strain invariant
-    e = dev(δϵ) # deviatoric strain tensor
-    γ = sqrt(2*e ⊡ e) # second invariant of the deviatoric strain tensor
-    ϵ̂ = δϵ/γ
-
-    # get damage constants
-    A₁ = compute_A1(r,A)
-    B₁ = compute_B1(r,B)
-    Γ = compute_Γ(r,A₁,B₁)
-
-    # get stiffness factors
-    Cμ = G/Γ * ( (3*(1-2ν))/(2*(1+ν)) + A₁^2/2 - A₁*B₁*ϵᵥ/(2γ) )
-    Cλ = G/Γ * ( 3ν/(1+ν) + B₁^2/2 - A₁^2/3 + A₁*B₁*ϵᵥ/γ + 2A₁*B₁*ϵᵥ^3/(9γ^3) )
-    Cσ = - G/Γ * ( A₁*B₁ + 2A₁*B₁*ϵᵥ^2/(3γ^2) )
-    Cσσ = G/Γ * (2A₁*B₁*ϵᵥ/γ)
-
-    # functional form of the stiffness tensor
-    C_func(i,j,k,l) = Cμ * ( δ(k,i)*δ(l,j) + δ(l,i)*δ(k,j) ) +
-                      Cλ * ( δ(i,j)*δ(k,l) ) +
-                      Cσ * ( ϵ̂[i,j]*δ(k,l) + δ(i,j)*ϵ̂[k,l] ) +
-                      Cσσ * (ϵ̂[i,j]*ϵ̂[k,l])
-
-    # assemble the tensor
-    C = SymmetricTensor{4,3}(C_func)
-
-
-    # stress update :
-    I2D = SymmetricTensor{2,3}(δ)
-    σ1 = C ⊡ δϵ
-    σ2 = G/Γ * ((3*(1-2ν))/(1+ν) + A₁^2 - A₁*B₁*ϵᵥ/γ) * ϵ +
-               (3ν/(1+ν) + B₁^2/2 - A₁^2/3 + A₁*B₁*ϵᵥ/(3γ)) * ϵᵥ * I2D -
-               (A₁*B₁/2)*γ*I2D
-    #println(all(σ1 .≈ σ2))
-    state.temp_σ += σ1
-
-    # damage update
-    p = 1/3 * tr(state.temp_σ)
-    s = dev(state.temp_σ)
-    τ = sqrt(1/2 * s ⊡ s)
-    KI = compute_KI(r::Rheology,p,τ,A,B)
-    dDdt = compute_subcrit_damage_rate(r::Rheology, KI, state.D)
-    ΔD = dDdt*clock.Δt
-    state.temp_D = min(state.D + ΔD, 1.0)
-
-
-    return state.temp_σ, C
-end
+# function compute_stress_tangent_damage_old(ϵ, ϵ_last, r::Rheology{T,D,Nothing,E,P}, state::MaterialState, clock::Clock, A, B) where {T,D,E,P}
+#     # unpack some parameters
+#     G = r.elasticity.G
+#     ν = r.elasticity.ν
+#
+#     # get strain invariants
+#     δϵ = ϵ - ϵ_last
+#     ϵᵥ = tr(δϵ) # first strain invariant
+#     e = dev(δϵ) # deviatoric strain tensor
+#     γ = sqrt(2*e ⊡ e) # second invariant of the deviatoric strain tensor
+#     ϵ̂ = δϵ/γ
+#
+#     # get damage constants
+#     A₁ = compute_A1(r,A)
+#     B₁ = compute_B1(r,B)
+#     Γ = compute_Γ(r,A₁,B₁)
+#
+#     # get stiffness factors
+#     Cμ = G/Γ * ( (3*(1-2ν))/(2*(1+ν)) + A₁^2/2 - A₁*B₁*ϵᵥ/(2γ) )
+#     Cλ = G/Γ * ( 3ν/(1+ν) + B₁^2/2 - A₁^2/3 + A₁*B₁*ϵᵥ/γ + 2A₁*B₁*ϵᵥ^3/(9γ^3) )
+#     Cσ = - G/Γ * ( A₁*B₁ + 2A₁*B₁*ϵᵥ^2/(3γ^2) )
+#     Cσσ = G/Γ * (2A₁*B₁*ϵᵥ/γ)
+#
+#     # functional form of the stiffness tensor
+#     C_func(i,j,k,l) = Cμ * ( δ(k,i)*δ(l,j) + δ(l,i)*δ(k,j) ) +
+#                       Cλ * ( δ(i,j)*δ(k,l) ) +
+#                       Cσ * ( ϵ̂[i,j]*δ(k,l) + δ(i,j)*ϵ̂[k,l] ) +
+#                       Cσσ * (ϵ̂[i,j]*ϵ̂[k,l])
+#
+#     # assemble the tensor
+#     C = SymmetricTensor{4,3}(C_func)
+#
+#
+#     # stress update :
+#     I2D = SymmetricTensor{2,3}(δ)
+#     σ1 = C ⊡ δϵ
+#     σ2 = G/Γ * ((3*(1-2ν))/(1+ν) + A₁^2 - A₁*B₁*ϵᵥ/γ) * ϵ +
+#                (3ν/(1+ν) + B₁^2/2 - A₁^2/3 + A₁*B₁*ϵᵥ/(3γ)) * ϵᵥ * I2D -
+#                (A₁*B₁/2)*γ*I2D
+#     #println(all(σ1 .≈ σ2))
+#     state.temp_σ += σ1
+#
+#     # damage update
+#     p = 1/3 * tr(state.temp_σ)
+#     s = dev(state.temp_σ)
+#     τ = sqrt(1/2 * s ⊡ s)
+#     KI = compute_KI(r::Rheology,p,τ,A,B)
+#     dDdt = compute_subcrit_damage_rate(r::Rheology, KI, state.D)
+#     ΔD = dDdt*clock.Δt
+#     state.temp_D = min(state.D + ΔD, 1.0)
+#
+#
+#     return state.temp_σ, C
+# end
 
 function compute_dDdl(r::Rheology,D)
     d = r.damage
@@ -450,6 +458,8 @@ function state_system!(du,u,p,t)
     # derivatives
     # D
     dDdt = compute_subcrit_damage_rate(r, σ, τ, D)
+    #println("D = ", D)
+    #println("dDdt = ", dDdt, "\n")
 
     # c1, c2, c3
     dc1dt = compute_dc1dD(r,D) * dDdt
@@ -492,6 +502,9 @@ function state_system!(du,u,p,t)
     du[3] = dγ = dγdt
     du[4] = dσ = compute_dσdt(r,a1,b1,da1dt,db1dt,ϵ,γ,dϵdt,dγdt)
     du[5] = dτ = compute_dτdt(r,b1,b2,db1dt,db2dt,ϵ,γ,dϵdt,dγdt)
+
+    # assertions
+    @assert dD >= 0
 end
 
 #### TEST ####

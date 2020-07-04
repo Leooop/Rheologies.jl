@@ -52,7 +52,12 @@ function compute_RK4_adaptative(u0,p,update_du!,tspan,Δt_ini,e₀)
         push!(t_vec,t_vec[end]+used_Δt)
 
         # break if D >= 1
-        (u_next[1] >= 1) && (cohesion_loss_flag = true ; break)
+        if u_next[1] >= 1
+            cohesion_loss_flag = true
+            pop!(u_vec)
+            push!(u_vec, 1.0)
+            break
+        end
     end
     return u_vec, t_vec, cohesion_loss_flag
 end
@@ -70,7 +75,12 @@ function compute_RK4_adaptative_push_version!(u_vec,t_vec,u0,p,update_du!,tspan,
         push!(t_vec,t_vec[end]+used_Δt)
 
         # break if D >= 1
-        (u_next[1] >= 1) && (cohesion_loss_flag = true ; break)
+        if u_next[1] >= 1
+            cohesion_loss_flag = true
+            pop!(u_vec)
+            push!(u_vec, 1.0)
+            break
+        end
     end
     return nothing
 end

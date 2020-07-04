@@ -94,7 +94,7 @@ function timestep!(c::Clock)
 end
 
 function undo_timestep!(c::Clock)
-    c.current_time -= c.Δt
+    (c.iter > 1) && (c.current_time -= c.Δt)
     c.iter -= 1
     pop!(c.time_vec)
     return nothing

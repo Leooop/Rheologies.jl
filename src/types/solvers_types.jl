@@ -81,9 +81,10 @@ end
 
 
 
-@kwdef struct NewtonRaphson{T<:AbstractLinearSolver} <: AbstractNonLinearSolver
-    atol::Float64 = 1e-4 # absolute residual norm tolerance
+@kwdef struct NewtonRaphson{T<:AbstractLinearSolver,R1<:Real,R2<:Real} <: AbstractNonLinearSolver
+    atol::R1 = 1e-4 # absolute residual norm tolerance
     max_iter_number::Int = 10 # maximum non linear iterations
+	max_iter_atol::R2 = 0.0 # absolute residual norm tolerance at max iteration
     max_div_iter::Int = 4 # maximum diverging iterations before restart
     autodiff::Bool = false # Has the jacobian to be computed numerically
     iter_on_nonassociated_plasticity::Bool = false

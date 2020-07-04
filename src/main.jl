@@ -80,6 +80,9 @@ function iterate(model::Model{2,N,D,V,E,P}, output_writer) where {N,D,V,E,P}
             else # converged
                 update_material_state!(model) # update converged state values
                 @timeit "export" write_output!(model, u, output_writer) # output
+                clock.Δt *= clock.Δt_fact_up # increase timestep
+                println(clock.Δt)
+                u_converged .= u
             end
 
             clock.current_time == clock.tspan[2] && break # end time loop if requested end time is reached

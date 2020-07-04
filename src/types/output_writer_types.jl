@@ -20,7 +20,7 @@ mutable struct OutputWriter{TF,F,I}
     interval::I
     data::Dict{Symbol,Vector{Float64}} # preallocation of output data
     last_output_time::Float64
-    opened_path::Bool
+    force_path::Bool
 end
 
 # Define aliases for differents file formats
@@ -63,6 +63,12 @@ function OutputWriter(format, model, path, outputs, frequency, interval, force_p
     end
     TF = typeof(frequency)
     TI = typeof(interval)
+
+    path = create_dir(path, force_path)
+
+    # loading relevant dependencies
+    (format == :JLD2) && (@eval(Rheologies, import FileIO))
+    (format == :MAT) && (@eval(Rheologies, import MAT))
 
     return OutputWriter{format,TF,TI}(path, outputs, frequency, interval, data, model.clock.tspan[1], force_path)
 end
@@ -110,9 +116,8 @@ function write_output!(model, u, ow::OutputWriter{TF,F,I}) where {TF,F,I}
         end
     end
 
-    # path and filename
-    ow.opened_path || create_dir!(ow) # creates a new directory name if exists
-    filename = "iter_$(model.clock.iter)_time_$(model.clock.current_time)"
+    # filename
+    filename = "iter_"*@sprintf("%04d",model.clock.iter)*"_time_$(model.clock.current_time)"
 
     # export
     export_sim(filename, model, u, ow)
@@ -128,18 +133,51 @@ function write_output!(model, u, mixed_ow::MixedOutputWriter)
     write_output!(model, u, mixed_ow.ow2)
 end
 
-function create_dir!(ow::OutputWriter)
-    path = ow.path
+# function create_dir!(ow::OutputWriter)
+#     path = ow.path
+#     if ispath(path)
+#         ow.force_path && (return nothing) # we reuse the existing folder
+#         if occursin(r"\([0-9]+\)", path[end-4:end])
+#             ind1 = findlast('(',path)
+#             ind2 = findlast(')',path)
+#             num = parse(Int,path[ind1+1:ind2-1])
+#             ow.path = path[1:ind1-1]*"("*string(num+1)*")"
+#             create_dir!(ow)
+#         else
+#             ow.path = path*"(1)"
+#             create_dir!(ow)
+#         end
+#     else
+#         splitp = splitpath(path)
+#         folder = splitp[end]
+#         folderdir = joinpath(splitp[1:end-1]...)
+#         cd(folderdir)
+#         mkdir(folder)
+#         ow.opened_path = true
+#         return nothing
+#     end
+# end
+
+function create_dir(path, force_path)
     if ispath(path)
-        if occursin(r"\([0-9]+\)", path[end-4:end])
-            ind1 = findlast('(',path)
-            ind2 = findlast(')',path)
-            num = parse(Int,path[ind1+1:ind2-1])
-            ow.path = path[1:ind1-1]*"("*string(num+1)*")"
-            create_dir!(ow)
+        if force_path
+            non_jl_files = filter!(file -> (!occursin(".jl",file) | occursin(".jld",file)),cd(readdir,path))
+            if !isempty(non_jl_files)
+                @info "directory already contains non .jl files. Do you want to erase them (y/n) ? "
+                erase_input(path,non_jl_files)
+            end
+            return path
         else
-            ow.path = path*"(1)"
-            create_dir!(ow)
+            if occursin(r"\([0-9]+\)", path[end-4:end])
+                ind1 = findlast('(',path)
+                ind2 = findlast(')',path)
+                num = parse(Int,path[ind1+1:ind2-1])
+                path = path[1:ind1-1]*"("*string(num+1)*")"
+                create_dir(path, force_path)
+            else
+                path = path*"(1)"
+                create_dir(path, force_path)
+            end
         end
     else
         splitp = splitpath(path)
@@ -147,9 +185,22 @@ function create_dir!(ow::OutputWriter)
         folderdir = joinpath(splitp[1:end-1]...)
         cd(folderdir)
         mkdir(folder)
-        ow.opened_path = true
-        return nothing
+        return path
     end
+end
+
+function erase_input(path,files)
+    key = readline(stdin)
+    if (key == "y") | (key == "Y")
+        @info "All non .jl files removed from directory"
+        rm.(joinpath.(Ref(path),files))
+    elseif (key == "n") | (key == "N")
+        @info "Existing non .jl files left in place"
+    else
+        @warn "input key is non recognized, please type \"y\" or \"n\""
+        erase_input()
+    end
+    return nothing
 end
 
 function export_sim(filename, model, u, ow::VTKOutputWriter)
@@ -165,8 +216,13 @@ end
 
 function export_sim(filename, model, u, ow::JLD2OutputWriter)
     ow.data[:u] = u
+
     # convert keys from symbols to strings
-    data_dict = Dict(string(k)=>v  for (k,v) in pairs(ow.data))
+    data_dict = Dict{String,Any}(string(k)=>v  for (k,v) in pairs(ow.data))
+    data_dict["t"] = model.clock.current_time # add simulation time
+    data_dict["res"] = spatial_resolution(model.grid)
+    data_dict["domain_size"] = get_spatial_domain_size(model.grid)
+
     FileIO.save(joinpath(ow.path, filename*".jld2"), data_dict)
     println("JLD2 saved")
 end
@@ -174,8 +230,30 @@ end
 function export_sim(filename, model, u, ow::MATOutputWriter)
     ow.data[:u] = u
     # convert keys from symbols to strings
-    data_dict = Dict(string(k)=>v  for (k,v) in pairs(ow.data))
-    save(joinpath(ow.path, filename*".jld2"), data_dict)
-    MAT.matwrite(filename*".mat", data_dict)
+    data_dict = Dict{String,Any}(string(k)=>v  for (k,v) in pairs(ow.data))
+    data_dict["t"] = model.clock.current_time # add simulation time
+    data_dict["res"] = [ i for i in spatial_resolution(model.grid)]
+    data_dict["domain_size"] = [ i for i in get_spatial_domain_size(model.grid)]
+    #save(joinpath(ow.path, filename*".mat"), data_dict)
+    println(typeof.(data_dict[key] for key in keys(data_dict)))
+    MAT.matwrite(joinpath(ow.path, filename*".mat"), data_dict)
     println("MAT saved")
+end
+
+function spatial_resolution(grid::Grid{dim,Cell{2,4,4}}) where {dim}
+    lx, ly = get_spatial_domain_size(grid)
+
+    cell = grid.cells[1]
+    el_lx = grid.nodes[cell.nodes[2]].x[1] - grid.nodes[cell.nodes[1]].x[1]
+    el_ly = grid.nodes[cell.nodes[4]].x[2] - grid.nodes[cell.nodes[1]].x[2]
+
+    return Int(round(lx/el_lx)), Int(round(ly/el_ly))
+end
+
+function get_spatial_domain_size(grid)
+    x_nodes = [ node.x[1] for node in grid.nodes ]
+    y_nodes = [ node.x[2] for node in grid.nodes ]
+    lx = maximum(x_nodes) - minimum(x_nodes)
+    ly = maximum(y_nodes) - minimum(y_nodes)
+    return lx, ly
 end

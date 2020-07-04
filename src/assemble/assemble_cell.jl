@@ -105,6 +105,74 @@ function assemble_cell!(Ke, re, model::Model{dim,1,TD,V,E,P}, cell, cv, n_basefu
             δϵ = SymmetricTensor{2,3}((i,j)->get_3D_func(i,j,δϵ2D))
             δu = shape_value(cv,q_point,i) # keep it 2D to fit body_forces dim
             re[i] += ((δϵ ⊡ σ) - (δu⋅bodyforces)) * dΩ # add internal force and external body forces to residual. ⊡ : double contraction, ⋅ : single contraction
+            δϵC = δϵ ⊡ C
+            for j in 1:i
+                Δϵ2D = shape_symmetric_gradient(cv, q_point, j)
+                Δϵ = SymmetricTensor{2,3}((i,j)->get_3D_func(i,j,Δϵ2D))
+                Ke[i, j] += δϵC ⊡ Δϵ * dΩ
+            end
+        end
+    end
+    symmetrize_lower!(Ke) #when j in 1:i
+
+    # Add traction as a negative contribution to the element residual `re`:
+    apply_Neumann_bc!(re, model, cell, n_basefuncs ; inc_sign = -)
+end
+
+### individual assembly of res function and derivative K used for linesearch
+
+function assemble_cell_res!(re, model::Model{dim,1,TD,V,E,P}, cell, cv, n_basefuncs, ue, noplast = false) where {dim,TD,V,E,P}
+    # unpack
+    cell_id = cell.current_cellid.x
+    r, states = model.material_properties[cell_id], model.material_state[cell_id]
+    bodyforces = model.body_forces[cell_id].components
+    #norm_bodyforces = norm(bodyforces)
+    #unit_bodyforces = bodyforces./norm_bodyforces
+
+    # reinit cellvalues
+    reinit!(cv, cell)
+
+    @inbounds for q_point in 1:getnquadpoints(cv)
+        # For each integration point, compute stress and material stiffness
+        ϵ2D = function_symmetric_gradient(cv, q_point, ue)
+        # Total strain recomputed each time because of the newton correction
+        ϵ = SymmetricTensor{2,3}((i,j)->get_3D_func(i,j,ϵ2D))
+        # @timeit "tangent computation"
+        σ, C = compute_stress_tangent(ϵ, r, states[q_point], model.clock, noplast = noplast)
+        dΩ = getdetJdV(cv, q_point)
+        for i in 1:n_basefuncs #TODO change loops order
+            δϵ2D = shape_symmetric_gradient(cv, q_point, i)
+            δϵ = SymmetricTensor{2,3}((i,j)->get_3D_func(i,j,δϵ2D))
+            δu = shape_value(cv,q_point,i) # keep it 2D to fit body_forces dim
+            re[i] += ((δϵ ⊡ σ) - (δu⋅bodyforces)) * dΩ # add internal force and external body forces to residual. ⊡ : double contraction, ⋅ : single contraction
+        end
+    end
+
+    # Add traction as a negative contribution to the element residual `re`:
+    apply_Neumann_bc!(re, model, cell, n_basefuncs)
+end
+
+function assemble_cell_K!(Ke, model::Model{dim,1,TD,V,E,P}, cell, cv, n_basefuncs, ue, noplast = false) where {dim,TD,V,E,P}
+    # unpack
+    cell_id = cell.current_cellid.x
+    r, states = model.material_properties[cell_id], model.material_state[cell_id]
+    #norm_bodyforces = norm(bodyforces)
+    #unit_bodyforces = bodyforces./norm_bodyforces
+
+    # reinit cellvalues
+    reinit!(cv, cell)
+
+    @inbounds for q_point in 1:getnquadpoints(cv)
+        # For each integration point, compute stress and material stiffness
+        ϵ2D = function_symmetric_gradient(cv, q_point, ue)
+        # Total strain recomputed each time because of the newton correction
+        ϵ = SymmetricTensor{2,3}((i,j)->get_3D_func(i,j,ϵ2D))
+        # @timeit "tangent computation"
+        σ, C = compute_stress_tangent(ϵ, r, states[q_point], model.clock, noplast = noplast)
+        dΩ = getdetJdV(cv, q_point)
+        for i in 1:n_basefuncs #TODO change loops order
+            δϵ2D = shape_symmetric_gradient(cv, q_point, i)
+            δϵ = SymmetricTensor{2,3}((i,j)->get_3D_func(i,j,δϵ2D))
             for j in 1:i
                 Δϵ2D = shape_symmetric_gradient(cv, q_point, j)
                 Δϵ = SymmetricTensor{2,3}((i,j)->get_3D_func(i,j,Δϵ2D))
@@ -113,7 +181,4 @@ function assemble_cell!(Ke, re, model::Model{dim,1,TD,V,E,P}, cell, cv, n_basefu
         end
     end
     symmetrize_lower!(Ke) #when j in 1:i
-
-    # Add traction as a negative contribution to the element residual `re`:
-    apply_Neumann_bc!(re, model, cell, n_basefuncs)
 end

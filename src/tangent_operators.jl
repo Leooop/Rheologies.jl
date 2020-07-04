@@ -6,7 +6,7 @@ get_elastic_stiffness_tensor(e::Elasticity{Float64}) = SymmetricTensor{4, 3}( (i
 
 Computes the consistent tangent operator associated with a Drucker-Prager return mapping to the smooth part of the yield function cone based on current strain `ϵ`. Updates the material states and returns the corrected stress as well as the fourth order consistent tangent tensorial operator.
 """
-function compute_stress_tangent(ϵ,
+function compute_stress_tangent_old(ϵ,
                                 r::Rheology{T,Nothing,Nothing,E,P},
                                 s::MaterialState,
                                 clock::Clock;
@@ -88,6 +88,113 @@ function compute_stress_tangent(ϵ,
         s.temp_ϵᵖ = s.ϵᵖ + Δϵᵖ # plastic strain
         s.temp_ϵ̅ᵖ = s.ϵ̅ᵖ + Δϵ̅ᵖ # accumulated plastic strain
         s.temp_σ = σ_trial - Δλ * Dᵉ⊡∇Q
+        return s.temp_σ, D
+    end
+end
+
+function compute_stress_tangent(ϵ,
+                                r::Rheology{T,Nothing,Nothing,E,P},
+                                s::MaterialState,
+                                clock::Clock;
+                                noplast = false) where {T,E<:Elasticity,P<:DruckerPrager}
+
+    # unpack elastic stiffness tensor
+    Dᵉ = r.elasticity.Dᵉ
+
+    ##### Evaluation of trial values
+    ϵᵉ_trial = ϵ - s.ϵᵖ # trial-elastic_strain
+    σ_trial = Dᵉ ⊡ ϵᵉ_trial # trial-stress
+
+    if noplast # during first newton iteration to homogenize strain field
+        s.temp_ϵ = ϵ
+        s.temp_σ = σ_trial
+        return s.temp_σ, Dᵉ
+    end
+
+    # unpack plastic properties
+    C = r.plasticity.C
+    H = r.plasticity.H
+    η = r.plasticity.η
+    ξ = r.plasticity.ξ
+
+    p_trial = 1/3 * tr(σ_trial) # trial pressure, negative in compression
+    s_trial = dev(σ_trial) # trial deviatoric stress
+    τ_trial = get_τ(s_trial,r.plasticity) # effetive trial-stress (2nd invariant of the deviatoric stress tensor)
+    τ_yield = -η*p_trial + ξ*(C + H*s.ϵ̅ᵖ)
+    F_trial  = τ_trial - τ_yield # Trial-value of the yield surface
+
+    if F_trial < 0.0 # elastic loading
+        s.temp_ϵ = ϵ
+        s.temp_σ = σ_trial
+        return s.temp_σ, Dᵉ
+    else # plastic loading
+        # unpack
+        G = r.elasticity.G
+        K = r.elasticity.K
+        ηᵛᵖ = r.plasticity.ηᵛᵖ
+        η̅ = r.plasticity.η̅
+
+        # Plastic flow potential gradient
+        I2D = SymmetricTensor{2,3}(δ) # second order identity tensor
+        ∇Q = ((1/(2*τ_trial)) * s_trial + η̅/3 * I2D)
+        #∇Q_scalar = sqrt(2/3 * ∇Q ⊡ ∇Q)
+
+        ##### Compute incremental plastic multiplier
+        Δλ_factor = 1/(G + K*η*η̅ + ηᵛᵖ/clock.Δt + ξ^2*H) #ξ*H*∇Q_scalar
+        Δλ = Δλ_factor * F_trial
+
+        ##### Test the validity of the return mapping to the smooth portion of the cone
+        is_valid = τ_trial - G*Δλ >= 0
+
+        ##### Use relevant return mapping algorithm
+
+        if is_valid # return to the smooth portion of the cone
+
+            ##### Compute unit deviatoric flow vector
+            ϵᵉdev_trial = dev(ϵᵉ_trial) #ϵᵉ_trial .- [ϵᵉvol_d3_trial, ϵᵉvol_d3_trial, ϵᵉvol_d3_trial, 0.0]
+            norm_ϵᵉdev_t = norm(ϵᵉdev_trial)#sqrt(ϵᵉdev_trial[1]^2 + ϵᵉdev_trial[2]^2 + ϵᵉdev_trial[3]^2 + 2*ϵᵉdev_trial[4]^2) # get the norm of the deviatoric elastic trial strain
+
+            # prevent division by zero if ϵᵉdev_trial is zero valued
+            if norm_ϵᵉdev_t != 0.0
+                inv_norm = 1.0/norm_ϵᵉdev_t
+            else
+                inv_norm = 0.0
+            end
+            uni_dev = ϵᵉdev_trial*inv_norm # unit deviatoric flow vector
+
+            ##### assemble tangent
+            Isymdev = SymmetricTensor{4,3}(Isymdev_func) # fourth order deviatoric symmetric tensor
+            A = Δλ_factor
+            A_fact = 2G * (1.0 - Δλ/(sqrt(2)*norm_ϵᵉdev_t))
+            A_factd3 = A_fact/3
+            B_fact = 2G * (Δλ/(sqrt(2)*norm_ϵᵉdev_t) - G*A)
+            C_fact = -sqrt(2)*G*A*K
+            D_fact = K*(1.0 - K*η*η̅*A)
+            D = A_fact * Isymdev +
+                B_fact * uni_dev ⊗ uni_dev +
+                C_fact * (η * uni_dev⊗I2D + η̅ * I2D⊗uni_dev) +
+                D_fact * I2D ⊗ I2D #TODO check whether this form of the D term or the one from the book's code is the good one => (D_fact - A_factd3) or just D_fact.
+
+            Δϵᵖ = Δλ*∇Q # plastic strain increment
+            Δϵ̅ᵖ = Δλ*ξ#Δλ*∇Q_scalar # accumulated plastic strain increment
+            s.temp_σ = σ_trial - Δλ * Dᵉ⊡∇Q
+
+        else # return to the apex
+            α = ξ/η
+            β = ξ/η̅
+            Δϵᵖ_vol = (p_trial - (C + H*s.ϵ̅ᵖ)*β) / (H*α*β + K)
+            Δϵᵖ = 1/3 * Δϵᵖ_vol * I2D
+            Δϵ̅ᵖ = α * Δϵᵖ_vol
+            s.temp_σ = (p_trial - K*Δϵᵖ_vol)*I2D
+
+            D = K * (1 - K/(K + α*β*H)) * I2D ⊗ I2D
+        end
+
+        ### update strains
+        s.temp_ϵ = ϵ
+        s.temp_ϵᵖ = s.ϵᵖ + Δϵᵖ # plastic strain
+        s.temp_ϵ̅ᵖ = s.ϵ̅ᵖ + Δϵ̅ᵖ # accumulated plastic strain
+
         return s.temp_σ, D
     end
 end
@@ -263,7 +370,7 @@ function compute_damaged_stiffness_tensor(r::Rheology,ϵij,D)
     return SymmetricTensor{4,3}(C_func)
 end
 
-function compute_stress_tangent(ϵ,
+function compute_stress_tangent(ϵij,
                                 r::Rheology{T,TD,Nothing,TE,Nothing},
                                 s::MaterialState,
                                 clock::Clock;
@@ -273,23 +380,23 @@ function compute_stress_tangent(ϵ,
     Cᵉ = r.elasticity.Dᵉ
 
     ##### Evaluation of trial values
-    ϵᵉ_trial = ϵ - s.ϵᵖ # trial-elastic_strain
+    ϵᵉ_trial = ϵij - s.ϵᵖ # trial-elastic_strain
     σ_trial = Cᵉ ⊡ ϵᵉ_trial # trial-stress
 
     if noplast # during first newton iteration to homogenize strain field
-        s.temp_ϵ = ϵ
+        s.temp_ϵ = ϵij
         s.temp_σ = σ_trial
         return s.temp_σ, Cᵉ
     end
 
-    Δϵ = ϵ - s.ϵ # strain increment
+    Δϵ = ϵij - s.ϵ # strain increment
     p_trial = 1/3 * tr(σ_trial) # trial pressure, negative in compression
     s_trial = dev(σ_trial) # trial deviatoric stress
     τ_trial = get_τ(s_trial,r.damage) # effetive trial-stress (2nd invariant of the deviatoric stress tensor)
     KI_trial = compute_KI(r,p_trial,τ_trial,s.D) # KI at the end of the timestep if the loading is purely elastic
 
     if KI_trial < 0.0 # elastic loading over Δt
-        s.temp_ϵ = ϵ
+        s.temp_ϵ = ϵij
         s.temp_σ = σ_trial
         return s.temp_σ, Cᵉ
     else # damage growth over Δt
@@ -298,7 +405,7 @@ function compute_stress_tangent(ϵ,
         e0 = dev(s.ϵ)
         γ0 = sqrt(2.0 * e0 ⊡ e0)
 
-        σ0 = tr(s.σ)
+        σ0 = 1/3 * tr(s.σ)
         s0 = dev(s.σ)
         τ0 = sqrt(0.5 * s0 ⊡ s0)
 
@@ -306,12 +413,18 @@ function compute_stress_tangent(ϵ,
         u0 = [s.D, ϵ0, γ0, σ0, τ0]
         # Time span
         tspan = (0.0,clock.Δt)
-        sub_Δt_ini = tspan[2]/10 # initial subtimestep for RK4 interation algorithm
+        sub_Δt_ini = tspan[2]/100 # initial subtimestep for RK4 interation algorithm
         damage_reltol = 1e-6
         # strain invariants rates
         dϵdt = tr(Δϵ)/clock.Δt
-        Δe = dev(Δϵ)
-        dγdt = sqrt(2.0 * Δe ⊡ Δe)/clock.Δt
+
+        e = dev(ϵij)
+        γ = sqrt(2.0 * e ⊡ e)
+        Δγ = γ - γ0
+        dγdt = Δγ/clock.Δt
+        # OLD AND WRONG :
+        #Δe = dev(Δϵ)
+        #dγdt = sqrt(2.0 * Δe ⊡ Δe)/clock.Δt
 
         # ODE system parameters
         params = [r, dϵdt, dγdt]
@@ -340,24 +453,24 @@ function compute_stress_tangent(ϵ,
         s.temp_D = u_vec[end][1]#sol[1,end]
 
         if s.temp_D > s.D
-            s.temp_σ = compute_σij(r,s.temp_D,ϵ) # changed from ϵᵉ_trial to ϵ
+            s.temp_σ = compute_σij(r,s.temp_D,ϵij) # changed from ϵᵉ_trial to ϵ
 
             # TEST
             σ_temp = 1/3 * tr(s.temp_σ) # trial pressure, negative in compression
             s_temp = dev(s.temp_σ) # trial deviatoric stress
             τ_temp = get_τ(s_temp,r.damage)
 
-            println("sigma diff : ", σ_temp - u_vec[end][4])
-            println("tau diff : ", τ_temp - u_vec[end][5])
+            #println("sigma diff : ", σ_temp - u_vec[end][4])
+            #println("tau diff : ", τ_temp - u_vec[end][5])
 
             Δϵᵖ = Δϵ - inv(Cᵉ)⊡(s.temp_σ - s.σ) # damage strain increment
-            s.temp_ϵ = ϵ
+            s.temp_ϵ = ϵij
             s.temp_ϵᵖ = s.ϵᵖ + Δϵᵖ # plastic strain
             # Construction of the tangent operator ∂σ_n/∂ϵ_n at {D = D_n+1}:
-            C = compute_damaged_stiffness_tensor(r,s.ϵ,s.temp_D)
+            C = compute_damaged_stiffness_tensor(r,s.ϵ,s.D) #TODO s.D or S.temp_D
             return s.temp_σ, C
         else
-            s.temp_ϵ = ϵ
+            s.temp_ϵ = ϵij
             s.temp_σ = σ_trial
             return s.temp_σ, Cᵉ
         end
@@ -383,33 +496,33 @@ function compute_stress_tangent(ϵ,
     end
 end
 
-function compute_stress_tangent(ϵ,
+function compute_stress_tangent(ϵij,
                                 r::Rheology{T,TD,Nothing,TE,TP},
                                 s::MaterialState,
                                 clock::Clock;
-                                noplast = false) where {T,TD<:Damage,TE<:Elasticity,TP<:Plasticity}
+                                noplast = false) where {T,TD<:Damage,TE<:Elasticity,TP}
 
     # unpack elastic stiffness tensor
     Cᵉ = r.elasticity.Dᵉ
 
     ##### Evaluation of trial values
-    ϵᵉ_trial = ϵ - s.ϵᵖ # trial-elastic_strain
+    ϵᵉ_trial = ϵij - s.ϵᵖ # trial-elastic_strain
     σ_trial = Cᵉ ⊡ ϵᵉ_trial # trial-stress
 
     if noplast # during first newton iteration to homogenize strain field
-        s.temp_ϵ = ϵ
+        s.temp_ϵ = ϵij
         s.temp_σ = σ_trial
         return s.temp_σ, Cᵉ
     end
 
-    Δϵ = ϵ - s.ϵ # strain increment
+    Δϵ = ϵij - s.ϵ # strain increment
     p_trial = 1/3 * tr(σ_trial) # trial pressure, negative in compression
     s_trial = dev(σ_trial) # trial deviatoric stress
     τ_trial = get_τ(s_trial,r.damage) # effetive trial-stress (2nd invariant of the deviatoric stress tensor)
     KI_trial = compute_KI(r,p_trial,τ_trial,s.D) # KI at the end of the timestep if the loading is purely elastic
 
     if KI_trial < 0.0 # elastic loading over Δt
-        s.temp_ϵ = ϵ
+        s.temp_ϵ = ϵij
         s.temp_σ = σ_trial
         return s.temp_σ, Cᵉ
     else # damage growth over Δt
@@ -418,7 +531,7 @@ function compute_stress_tangent(ϵ,
         e0 = dev(s.ϵ)
         γ0 = sqrt(2.0 * e0 ⊡ e0)
 
-        σ0 = tr(s.σ)
+        σ0 = 1/3 * tr(s.σ)
         s0 = dev(s.σ)
         τ0 = sqrt(0.5 * s0 ⊡ s0)
 
@@ -426,12 +539,17 @@ function compute_stress_tangent(ϵ,
         u0 = [s.D, ϵ0, γ0, σ0, τ0]
         # Time span
         tspan = (0.0,clock.Δt)
-        sub_Δt_ini = tspan[2]/10 # initial subtimestep for RK4 interation algorithm
+        sub_Δt_ini = tspan[2]/100 # initial subtimestep for RK4 interation algorithm
         damage_reltol = 1e-6
         # strain invariants rates
         dϵdt = tr(Δϵ)/clock.Δt
-        Δe = dev(Δϵ)
-        dγdt = sqrt(2.0 * Δe ⊡ Δe)/clock.Δt
+
+        e = dev(ϵij)
+        γ = sqrt(2.0 * e ⊡ e)
+        Δγ = γ - γ0
+        dγdt = Δγ/clock.Δt
+        #Δe = dev(Δϵ)
+        #dγdt = sqrt(2.0 * Δe ⊡ Δe)/clock.Δt
 
         # ODE system parameters
         params = [r, dϵdt, dγdt]
@@ -456,31 +574,43 @@ function compute_stress_tangent(ϵ,
         # TODO for damaged-plastic material, the idea is to check if the integration has been done over the whole Δt. If it stopped before, it means loss of cohesion of the material. A plastic update is therefore required in that case.
 
         # Handle loss of cohesion => branching to a plastic behavior
-        if cohesion_loss_flag
+        if (TP <: Plasticity) & cohesion_loss_flag
             r_nodamage = Rheology(damage = Nothing,
                                   viscosity = r.viscosity,
                                   elasticity = r.elasticity,
                                   plasticity = r.plasticity)
                                   # TODO tester avec ou sans reset de plastic strain
-            compute_stress_tangent(ϵ, r_nodamage, s, clock)
+            compute_stress_tangent(ϵij, r_nodamage, s, clock)
         end
 
         # update state
         s.temp_D = u_vec[end][1]#sol[1,end]
 
         if s.temp_D > s.D
-            s.temp_σ = compute_σij(r,s.temp_D,ϵ) # changed from ϵᵉ_trial to ϵ
+            s.temp_σ = compute_σij(r,s.temp_D,ϵij) # changed from ϵᵉ_trial to ϵ
+
+            ## TEST ##
+            if s.temp_D - s.D > 0.0001
+                p_temp = 1/3 * tr(s.temp_σ) # pressure, negative in compression
+                s_temp = dev(s.temp_σ) # deviatoric stress
+                τ_temp = get_τ(s_temp,r.damage)
+                println("p diff : ", p_temp - u_vec[end][4])
+                println("tau diff : ", τ_temp - u_vec[end][5])
+            end
+
             Δϵᵖ = Δϵ - inv(Cᵉ)⊡(s.temp_σ - s.σ) # damage strain increment
-            s.temp_ϵ = ϵ
+            s.temp_ϵ = ϵij
             s.temp_ϵᵖ = s.ϵᵖ + Δϵᵖ # plastic strain
             # Construction of the tangent operator ∂σ_n/∂ϵ_n at {D = D_n+1}:
-            C = compute_damaged_stiffness_tensor(r,s.ϵ,s.temp_D)
+            C = compute_damaged_stiffness_tensor(r,s.ϵ,s.D) #TODO check s.D or temp_D
             return s.temp_σ, C
         else
-            s.temp_ϵ = ϵ
+            s.temp_ϵ = ϵij
             s.temp_σ = σ_trial
             return s.temp_σ, Cᵉ
         end
+
+
         # EQUALITY TEST TODO investigate that
         #Δσ = C ⊡ Δϵ
         # println("Δϵ : ", Δϵ)
@@ -503,7 +633,7 @@ function compute_stress_tangent(ϵ,
     end
 end
 
-function compute_stress_tangent(ϵ,
+function compute_stress_tangent(ϵij,
                                 r::Rheology{T,TD,TV,TE,TP},
                                 s::MaterialState,
                                 clock::Clock;
@@ -518,16 +648,16 @@ function compute_stress_tangent(ϵ,
     Gratio = Gᵛᵉ/r.elasticity.G
     I2D = SymmetricTensor{2,3}(δ) # second order identity tensor
     σ⁰ = (1/3)*tr(s.σ)*I2D + Gratio*dev(s.σ)
-    ϵᵉ_trial = ϵ - s.ϵᵖ # trial-elastic_strain
-    Δϵ = ϵ - s.ϵ # strain increment
-    σ_trial = σ⁰ + Cᵛᵉ ⊡ (ϵ - s.ϵ) # trial stress
+    ϵᵉ_trial = ϵij - s.ϵᵖ # trial-elastic_strain
+    Δϵ = ϵij - s.ϵ # strain increment
+    σ_trial = σ⁰ + Cᵛᵉ ⊡ (ϵij - s.ϵ) # trial stress
 
     ##### Evaluation of trial values OLD
     # ϵᵉ_trial = ϵ - s.ϵᵖ # trial-elastic_strain
     # σ_trial = Cᵉ ⊡ ϵᵉ_trial # trial-stress
 
     if noplast # during first newton iteration to homogenize strain field
-        s.temp_ϵ = ϵ
+        s.temp_ϵ = ϵij
         s.temp_σ = σ_trial
         return s.temp_σ, Cᵛᵉ
     end
@@ -538,7 +668,7 @@ function compute_stress_tangent(ϵ,
     KI_trial = compute_KI(r,p_trial,τ_trial,s.D) # KI at the end of the timestep if the loading is purely elastic
 
     if KI_trial < 0.0 # elastic loading over Δt
-        s.temp_ϵ = ϵ
+        s.temp_ϵ = ϵij
         s.temp_σ = σ_trial
         return s.temp_σ, Cᵛᵉ
     else # damage growth over Δt
@@ -547,7 +677,7 @@ function compute_stress_tangent(ϵ,
         e0 = dev(s.ϵ)
         γ0 = sqrt(2.0 * e0 ⊡ e0)
 
-        σ0 = tr(s.σ)
+        σ0 = 1/3 * tr(s.σ)
         s0 = dev(s.σ)
         τ0 = sqrt(0.5 * s0 ⊡ s0)
 
@@ -555,12 +685,17 @@ function compute_stress_tangent(ϵ,
         u0 = [s.D, ϵ0, γ0, σ0, τ0]
         # Time span
         tspan = (0.0,clock.Δt)
-        sub_Δt_ini = tspan[2]/10 # initial subtimestep for RK4 interation algorithm
+        sub_Δt_ini = tspan[2]/100 # initial subtimestep for RK4 interation algorithm
         damage_reltol = 1e-6
         # strain invariants rates
         dϵdt = tr(Δϵ)/clock.Δt
-        Δe = dev(Δϵ)
-        dγdt = sqrt(2.0 * Δe ⊡ Δe)/clock.Δt
+        e = dev(ϵij)
+        γ = sqrt(2.0 * e ⊡ e)
+        Δγ = γ - γ0
+        dγdt = Δγ/clock.Δt
+        # OLD AND WRONG :
+        #Δe = dev(Δϵ)
+        #dγdt = sqrt(2.0 * Δe ⊡ Δe)/clock.Δt
 
         # ODE system parameters
         params = [r, dϵdt, dγdt]
@@ -588,22 +723,22 @@ function compute_stress_tangent(ϵ,
                                   viscosity = r.viscosity,
                                   elasticity = r.elasticity,
                                   plasticity = r.plasticity)
-            compute_stress_tangent(ϵ, r_nodamage,s,clock ; noplast = false)
+            compute_stress_tangent(ϵij, r_nodamage,s,clock ; noplast = false)
         end
 
         # update temporary state
         s.temp_D = u_vec[end][1]
 
         if s.temp_D > s.D
-            s.temp_σ = compute_σij(r,s.temp_D,ϵ) # changed from ϵᵉ_trial to ϵ
+            s.temp_σ = compute_σij(r,s.temp_D,ϵij) # changed from ϵᵉ_trial to ϵ
             Δϵᵖ = Δϵ - inv(Cᵛᵉ)⊡(s.temp_σ - s.σ) # damage strain increment
-            s.temp_ϵ = ϵ
+            s.temp_ϵ = ϵij
             s.temp_ϵᵖ = s.ϵᵖ + Δϵᵖ # plastic strain
             # Construction of the tangent operator ∂σ_n/∂ϵ_n at {D = D_n+1}:
             C = compute_damaged_stiffness_tensor(r,s.ϵ,s.temp_D)
             return s.temp_σ, C
         else
-            s.temp_ϵ = ϵ
+            s.temp_ϵ = ϵij
             s.temp_σ = σ_trial
             return s.temp_σ, Cᵛᵉ
         end

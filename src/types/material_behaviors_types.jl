@@ -309,7 +309,19 @@ end
 end
 BRSDamage{T}(μ,β,K₁c,a,ψ,D₀,n,l̇₀,H,A) where {T} = BRSDamage(μ,β,K₁c,a,ψ,D₀,n,l̇₀,H,A)
 
-
+function Base.show(io::IO, ::MIME"text/plain", d::BRSDamage)
+    print(io, "$(typeof(d))\n",
+    "\t├── μ (flaws friction coefficient)               : $(d.μ)\n",
+    "\t├── β (correction factor)                        : $(d.μ)\n",
+    "\t├── K₁c (fracture toughness)                     : $(d.K₁c)\n",
+    "\t├── a (flaws radius)                             : $(d.a)\n",
+    "\t├── ψ (flaws angle wrt σ₁ in degree)             : $(d.ψ)\n",
+    "\t├── D₀ (initial damage, constrains flaws density) : $(d.D₀)\n",
+    "\t├── n (stress corrosion index)                   : $(d.n)\n",
+    "\t├── l̇₀ (ref crack growth rate in m/s)            : $(d.l̇₀)\n",
+    "\t├── H (Activation enthalpy (J/mol))              : $(d.H)\n",
+    "\t└── A (preexponetial factor (m/s))               : $(d.A)\n")
+end
 
 ## UPDATE PARAMETERS :
 function updatetypeparameter(::Viscosity,p)
