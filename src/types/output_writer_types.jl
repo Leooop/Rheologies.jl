@@ -67,8 +67,8 @@ function OutputWriter(format, model, path, outputs, frequency, interval, force_p
     path = create_dir(path, force_path)
 
     # loading relevant dependencies
-    (format == :JLD2) && (@eval(Rheologies, import FileIO))
-    (format == :MAT) && (@eval(Rheologies, import MAT))
+    (format == :JLD2) && (@info("loading FileIO package") ; @eval(Rheologies, import FileIO))
+    (format == :MAT) && (@info("loading MAT package") ; @eval(Rheologies, import MAT))
 
     return OutputWriter{format,TF,TI}(path, outputs, frequency, interval, data, model.clock.tspan[1], force_path)
 end

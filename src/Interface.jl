@@ -117,9 +117,16 @@ end
 #     return dh, bcd, cellvalues, facevalues, mp, ms, bf, K, RHS
 # end
 
-function setup_model(grid::Grid, variables::PrimitiveVariables,
+function setup_model(grid::Grid, variables::PrimitiveVariables{NV},
                      quad_order::Int, quad_type::Symbol,
-                     bc_dicts::BoundaryConditions, body_forces::BodyForces, initial_state, rheology::Rheology)
+                     bc_dicts::BoundaryConditions, body_forces::BodyForces, initial_state, rheology::Rheology{T,TD,TV,TE,TP}) where {NV,T,TD}
+
+    # load packages
+    if (NV == 2) & (TD <:Damage)
+        @info("loading NLsolve package")
+        @eval(Rheologies, import NLsolve))
+    end
+
     # get elements geometry
     el_geom = getcelltype(grid)
 
@@ -141,7 +148,7 @@ function setup_model(grid::Grid, variables::PrimitiveVariables,
     RHS = zeros(ndofs(dh))
 
     mp = create_material_properties(grid, rheology)
-    ms = create_material_states(mp,grid,cellvalues[1],initial_state)
+    ms = create_material_states(mp,variables,grid,cellvalues[1],initial_state)
     bf = create_body_forces_field(grid, body_forces)
 
     return dh, bcd, cellvalues, facevalues, mp, ms, bf, K, RHS
@@ -183,38 +190,38 @@ function create_body_forces_field(grid::Grid{dim}, body_forces::BodyForces{T}) w
     return bf
 end
 
-ms_type(r::Rheology{T,Nothing,V,E,Nothing}) where {T,V,E<:Elasticity} = BasicMaterialState()
-ms_type(r::Rheology{T,Nothing,V,E,P}) where {T,V,E<:Elasticity, P<:Plasticity} = PlasticMaterialState()
-ms_type(r::Rheology{T,D,V,E,P}) where {T,D<:Damage,V,E<:Elasticity,P} = DamagedPlasticMaterialState(r)
-
+ms_type(r::Rheology{T,Nothing,V,E,Nothing},vars::PrimitiveVariables{N}) where {T,V,E<:Elasticity,N} = BasicMaterialState()
+ms_type(r::Rheology{T,Nothing,V,E,P},vars::PrimitiveVariables{N}) where {T,V,E<:Elasticity, P<:Plasticity,N} = PlasticMaterialState()
+ms_type(r::Rheology{T,D,V,E,P},vars::PrimitiveVariables{1}) where {T,D<:Damage,V,E<:Elasticity,P} = DamagedPlasticMaterialState(r)
+ms_type(r::Rheology{T,D,V,E,P},vars::PrimitiveVariables{2}) where {T,D<:Damage,V,E<:Elasticity,P} = PlasticMaterialState()
 # convenience function :
 ms_type(mp::Vector) = ms_type(mp[1])
 
-function create_material_states(mp,grid::Grid,cv,::Nothing)
+function create_material_states(mp,vars,grid::Grid,cv,::Nothing)
     nqp = getnquadpoints(cv)
     return [[ms_type(mp) for _ in 1:nqp] for _ in 1:getncells(grid)]
 end
 
-function create_material_states(mp,grid::Grid,cv,initial_state::Dict)
+function create_material_states(mp,vars::PrimitiveVariables{N},grid::Grid,cv,initial_state::Dict) where {N}
     nqp = getnquadpoints(cv)
     ms = Vector{Vector{typeof(ms_type(mp))}}()
     for cellid in 1:getncells(grid)
         r = mp[cellid]
-        cell_ms = create_cell_material_states(r,grid,initial_state,cellid,nqp)
+        cell_ms = create_cell_material_states(r,N,grid,initial_state,cellid,nqp)
         push!(ms,cell_ms)
     end
     return ms
 end
 
-function create_cell_material_states(r,grid,initial_state,cellid,nqp)
+function create_cell_material_states(r,n_prim_vars,grid,initial_state,cellid,nqp)
     cell_ms = Vector{typeof(ms_type(r))}(undef,nqp)
     for qp in 1:nqp
-        cell_ms[qp] = create_qp_material_state(r,grid,initial_state,cellid,qp)
+        cell_ms[qp] = create_qp_material_state(r,n_prim_vars,grid,initial_state,cellid,qp)
     end
     return cell_ms
 end
 
-function create_qp_material_state(r::Rheology{T,Nothing,V,E,Nothing},grid,initial_state,cellid,qp) where {T,V<:Viscosity,E<:Elasticity}
+function create_qp_material_state(r::Rheology{T,Nothing,V,E,Nothing},n_prim_vars,grid,initial_state,cellid,qp) where {T,V<:Viscosity,E<:Elasticity}
     for (key, value) in pairs(initial_state)
         if key in (:ϵ,:σ)
             if value <: AbstractArray
@@ -234,7 +241,7 @@ function create_qp_material_state(r::Rheology{T,Nothing,V,E,Nothing},grid,initia
     return BasicMaterialState(ϵ,σ,ϵ,σ)
 end
 
-function create_qp_material_state(r::Rheology{T,Nothing,V,E,P},grid,initial_state,cellid,qp) where {T,V,E<:Elasticity, P<:Plasticity}
+function create_qp_material_state(r::Rheology{T,Nothing,V,E,P},n_prim_vars,grid,initial_state,cellid,qp) where {T,V,E<:Elasticity, P<:Plasticity}
     for (key, value) in pairs(initial_state)
         if key in (:ϵᵖ,:ϵ̅ᵖ,:ϵ,:σ)
             if value <: AbstractArray
@@ -260,7 +267,7 @@ function create_qp_material_state(r::Rheology{T,Nothing,V,E,P},grid,initial_stat
     return PlasticMaterialState(ϵᵖ,ϵ̅ᵖ,ϵ,σ,ϵᵖ,ϵ̅ᵖ,ϵ,σ)
 end
 
-function create_qp_material_state(r::Rheology{T,TD,V,E,P},grid,initial_state,cellid,qp) where {T,TD<:Damage,V,E<:Elasticity,P}
+function create_qp_material_state(r::Rheology{T,TD,V,E,P},n_prim_vars,grid,initial_state,cellid,qp) where {T,TD<:Damage,V,E<:Elasticity,P}
     for (key, value) in pairs(initial_state)
         if key in (:D,:ϵᵖ,:ϵ̅ᵖ,:ϵ,:σ)
             if value isa AbstractArray
@@ -290,8 +297,103 @@ function create_qp_material_state(r::Rheology{T,TD,V,E,P},grid,initial_state,cel
     !@isdefined(ϵ̅ᵖ) && (ϵ̅ᵖ = 0.0)
     !@isdefined(ϵ) && (ϵ = zero(SymmetricTensor{2, 3}))
     !@isdefined(σ) && (σ = zero(SymmetricTensor{2, 3}))
-    return DamagedPlasticMaterialState(D,ϵᵖ,ϵ̅ᵖ,ϵ,σ,D,ϵᵖ,ϵ̅ᵖ,ϵ,σ)
+    (n_prim_vars == 1) && (return DamagedPlasticMaterialState(D,ϵᵖ,ϵ̅ᵖ,ϵ,σ,D,ϵᵖ,ϵ̅ᵖ,ϵ,σ))
+    (n_prim_vars == 2) && (return PlasticMaterialState(ϵᵖ,ϵ̅ᵖ,ϵ,σ,ϵᵖ,ϵ̅ᵖ,ϵ,σ))
 end
 
 
 gettypeparameters(::Rheology{T,D,V,E,P}) where {T,D,V,E,P} = (T,D,V,E,P)
+
+function get_initial_solution_vector!(u,dh,initial_values::Vector)
+    u .= initial_values
+end
+function get_initial_solution_vector!(u,dh,initial_values::Dict)
+    vars = keys(initial_values)
+    field_names = dh.field_names
+
+    # check that initiated variables are defined
+    for var in vars
+        if var ∉ field_names
+            @error "variable $var defined in initial_values is not a primitive variable of the model.\n
+            Please, remove it."
+        end
+    end
+
+    # check that vars functions of space can be evaluated (enough geometry nodes)
+    n_geom_nodes_per_cell = length(dh.grid.cells[1].nodes)
+    nbasefuncs = getnbasefunctions.(dh.field_interpolations)
+    prescribed_fields = [pf for pf in field_names if pf ∈ vars]
+    nbfs = [nbf for (i,nbf) in enumerate(nbasefuncs) if field_names[i] ∈ vars]
+    max_basefuncs, id = findmax(nbfs)
+    # abort if geometry contains less nodes than one of the initial variables in the dict
+    if max_basefuncs > n_geom_nodes_per_cell
+        @error "field $(prescribed_fields[id]) interpolation requires more nodes than the geometry definition.\n
+        Some fields nodes don't have coordinates to evaluate the function provided. \n
+        Please decrease the interpolation order of this field ($(dh.field_interpolations[dh.field_interpolations .== prescribed_fields[id]])), \n
+        or increase the geometry's nodes per element"
+    end
+
+    # find fields dofs offsets
+    fields_dims = dh.field_dims
+    fields_el_ndofs = nbasefuncs.*fields_dims
+    fields_offsets = [0] #first field is not offset
+    for i in 2:length(fields_el_dofs) # following fields offsets are a cumulative sum of offsets
+        push!(fields_offsets,fields_offsets[i-1] + field_el_ndofs[i-1])
+    end
+    # find valued variables dofs offsets and elements dofs number:
+    vars_offsets = zeros(Int,length(vars))
+    vars_el_ndofs = zeros(Int,length(vars))
+    vars_dims = zeros(Int,length(vars))
+    for (i,var) in enumerate(vars)
+        for (j,field) in enumerate(field_names)
+            if var == field
+                vars_offsets[i] = fields_offsets[j]
+                vars_el_ndofs[i] = fields_el_ndofs[j]
+                vars_dims[i] = fields_dims[j]
+            end
+        end
+    end
+    #loop over cells
+    for cell in CellIterator(dh)
+        for (i,var) in enumerate(vars)
+            var_el_ndofs = vars_el_ndofs[i]
+            var_dim = vars_dims[i]
+
+            # account for field dimension
+            var_1dim_coords = cell.coords[1:Int(var_el_ndofs/var_dim)]
+            var_dofs_coords = repeat(var_1dim_coords, inner=var_dim)
+
+            # compute field value with the coordinates
+            var_dofs_values = initial_values[var].(var_dofs_coords)
+
+            var_dofs = cell.celldofs[1+vars_offsets[i]:vars_el_ndofs[i]+vars_offsets[i]]
+            u[var_dofs] .= var_dofs_values
+        end
+    end
+    return nothing
+end
+
+Cell{2,3,3}  => "Triangle",
+Cell{2,6,3}  => "QuadraticTriangle",
+Cell{2,4,4}  => "Quadrilateral",
+Cell{2,9,4}  => "QuadraticQuadrilateral",
+
+"Quadrilateral"
+function get_dofs_coordinates(cell,ndofs,offset,cell_type::Cell{2,4,4})
+    if ndofs = 4 # linear interpolation of the field
+        return cell_coords
+    else
+        @error "no congruence between field and geometry"
+    end
+end
+
+"QuadraticQuadrilateral"
+function get_dofs_coordinates(cell,ndofs,offset,cell_type::Cell{2,9,4})
+    if ndofs = 9 # linear interpolation of the field
+        return cell_coords
+    elseif ndofs = 4
+        return cell_coords
+    else
+        @error "no congruence between field and geometry"
+    end
+end

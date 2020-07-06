@@ -1,5 +1,5 @@
 
-function solve(model::Model; output_writer = nothing, log = false)
+function solve(model::Model; initial_values = nothing, output_writer = nothing, log = false)
     # TimerOutput handling
     reset_timer!()
     (log == false) && disable_timer!()
@@ -19,7 +19,7 @@ function solve(model::Model; output_writer = nothing, log = false)
 end
 
 
-function iterate(model::Model{2,N,Nothing,Nothing,E,Nothing}, output_writer) where {N,E<:Elasticity}
+function iterate(model::Model{2,N,Nothing,Nothing,E,Nothing},initial_values, output_writer) where {N,E<:Elasticity}
     @info "Rheology is purely elastic. Displacement field is solved once at the end of the requested time interval"
     c = model.clock
     c.current_time = c.tspan[2]
@@ -47,7 +47,59 @@ function iterate(model::Model{2,N,Nothing,Nothing,E,Nothing}, output_writer) whe
     return u
 end
 
-function iterate(model::Model{2,N,D,V,E,P}, output_writer) where {N,D,V,E,P}
+function iterate(model::Model{2,2,D,V,E,P}, initial_values, output_writer) where {N,D,V,E,P}
+
+    # Unpack some model fields
+    dh, dbc, cv, clock = model.dofhandler, model.dirichlet_bc, model.cellvalues_tuple, model.clock
+
+    # Pre-allocate solution vectors, etc.
+    n_dofs = ndofs(dh)  # total number of dofs
+    u  = zeros(n_dofs)
+    if initial_values != nothing
+        get_initial_solution_vector!(u,dh,initial_values)
+    end
+    u_converged = copy(u) # backup solution vector
+    δu = zeros(n_dofs)  # displacement correction
+
+    while clock.current_time <= clock.tspan[2]
+        @timeit "time iteration" begin
+
+            timestep!(clock) # update clock
+
+            print("\n TIME ITERATION $(clock.iter)\n",
+            " current simulation time = $(clock.current_time):\n",
+            " timestep = $(clock.Δt)\n")
+
+
+            # Apply dirichlet bc and iteratively solve for u :
+            # @timeit "nonlinear solve"
+            #restart_flag = nonlinear_solve!(u,u_converged,δu,model,restart_flag)
+            update!(dbc, clock.current_time) # evaluates the D-bndc at time t
+            apply!(u, dbc)  # set the prescribed values in the solution vector
+            f!(res,u) = doassemble!(res, model, getnbasefunctions.(model.cellvalues_tuple), u, u_converged)
+            sol = NLsolve.nlsolve(f!, u)
+
+            if sol.x_converged == false
+                u .= u_converged
+                undo_timestep!(clock)
+                clock.Δt *= clock.Δt_fact_down # decreased timestep
+            else # converged
+                update_material_state!(model) # update converged state values
+                @timeit "export" write_output!(model, u, output_writer) # output
+
+                clock.Δt *= clock.Δt_fact_up # increase timestep
+                println(clock.Δt)
+                u_converged .= u
+            end
+
+            clock.current_time == clock.tspan[2] && break # end time loop if requested end time is reached
+
+        end
+    end
+    return u
+end
+
+function iterate(model::Model{2,1,D,V,E,P}, output_writer) where {N,D,V,E,P}
 
     # Unpack some model fields
     dh, dbc, cv, clock = model.dofhandler, model.dirichlet_bc, model.cellvalues_tuple, model.clock
@@ -71,7 +123,7 @@ function iterate(model::Model{2,N,D,V,E,P}, output_writer) where {N,D,V,E,P}
 
             # Apply dirichlet bc and iteratively solve for u :
             # @timeit "nonlinear solve"
-            restart_flag = nonlinear_solve!(u,δu,model,restart_flag)
+            restart_flag = nonlinear_solve!(u,u_converged,δu,model,restart_flag)
 
             if restart_flag == true
                 u .= u_converged
@@ -80,6 +132,7 @@ function iterate(model::Model{2,N,D,V,E,P}, output_writer) where {N,D,V,E,P}
             else # converged
                 update_material_state!(model) # update converged state values
                 @timeit "export" write_output!(model, u, output_writer) # output
+
                 clock.Δt *= clock.Δt_fact_up # increase timestep
                 println(clock.Δt)
                 u_converged .= u

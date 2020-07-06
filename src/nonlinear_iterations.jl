@@ -1,4 +1,98 @@
-function nonlinear_solve!(u, δu, model::Model{dim,N,D,V,E,P,S}, restart_flag) where {dim,N,D,V,E,P,S<:AbstractNonLinearSolver}
+function nonlinear_solve!(u, u_prev, δu, model::Model{dim,2,D,V,E,P,S}, restart_flag) where {dim,N,D,V,E,P,S<:AbstractNonLinearSolver}
+
+    # Unpack some model fields
+    grid, dh, dbc, mp, states, K, res, clock, solver = model.grid, model.dofhandler, model.dirichlet_bc, model.material_properties, model.material_state, model.K, model.RHS, model.clock, model.solver
+
+    println("Δt in nlsolve : ", clock.Δt)
+
+    # number of base functions per element
+    nbasefuncs = getnbasefunctions.(model.cellvalues_tuple)
+
+
+    # flags for restarting nonlinear iterations
+    divergence_flag = false # flag when diverging residual norm
+    max_iter_flag = false # flag when reaching max number of NL iterations
+
+    # some initializations
+    divergence_count = 0 # used to trigger reset of non linear iterations if residual norm diverges
+    norm_prev = 0.0
+
+    # apply boundary dirichlet boundary conditions to u :
+    update!(dbc, clock.current_time) # evaluates the D-bndc at time t
+    apply!(u, dbc)  # set the prescribed values in the solution vector
+
+
+    newton_itr = -1 # initialize non linear iteration count
+    while true; newton_itr += 1
+        @timeit "Newton iter" begin
+            #@timeit "assemble"
+            tt = @elapsed doassemble_res!(model::Model{dim,N,D,V,E,P}, nbasefuncs, u ; noplast = (newton_itr == 0))
+            println("assemble time : ", tt)
+            # compute residual norm
+            norm_res = norm(res[JuAFEM.free_dofs(dbc)])
+
+            # print current Newton iteration
+            print("Iteration: $newton_itr \tresidual: $(@sprintf("%.8f", norm_res))\n")
+
+            #### Max D TEST :
+            if D <: Damage
+                max_ΔD = 0
+                for cell_states in states
+                    cell_temp_D = mean([state.temp_D for state in cell_states])
+                    cell_D = mean([state.D for state in cell_states])
+                    max_ΔD = max(max_ΔD,cell_temp_D - cell_D)
+                end
+                print("\t max ΔD = ", max_ΔD, "\n")
+            end
+            ####
+
+            #### EXIT CHECKS ####
+            if (norm_res < solver.atol)
+                break
+            elseif (solver.max_iter_atol > 0) & (newton_itr == solver.max_iter_number) & (norm_res < solver.max_iter_atol)
+                (norm_res >= solver.atol) && @warn("last newton iteration, accepted residual is ",norm_res)
+                break # if
+            end
+
+            # if too many successive divergence, reset the nonlinear iterations from last time iteration solution u_converged using a lower timestep
+            if newton_itr == 0
+                norm_prev = norm_res
+            else
+                if norm_res >= norm_prev
+                    divergence_count += 1
+                else
+                    divergence_count = 0
+                end
+                norm_prev = norm_res
+            end
+
+            divergence_flag = (divergence_count == solver.max_div_iter)
+            max_iter_flag = (newton_itr == solver.max_iter_number)
+
+            if divergence_flag | max_iter_flag
+                divergence_flag && (@info "$(solver.max_div_iter) successive non linear iterations were diverging. Restart with decreased timestep")
+                max_iter_flag   && (@info "reached maximum number of non linear iterations : $(solver.max_iter_number). Restart with decreased timestep")
+                restart_flag = true
+                return restart_flag
+            end
+
+
+            ### Linear Solve for δu ###
+            @timeit "apply_dbc" apply_zero!(K, res, dbc)
+            #@timeit "linear_solve" δu .= Symmetric(K) \ -res
+            @timeit "linear_solve" δu .= solver.linear_solver(K,-res,model)
+            # @timeit "linear_solve" begin
+            #     ## TODO better
+            #     Pl = Preconditioners.AMGPreconditioner(Symmetric(K))
+            #     IterativeSolvers.cg!(δu, Symmetric(K), res, Pl = Pl, solver.linear_solver.kwargs...)
+            # end
+            # displacement correction
+            u .+= δu
+        end
+    end
+end
+
+function nonlinear_solve!(u, δu, model::Model{dim,1,D,V,E,P,S}, restart_flag) where {dim,N,D,V,E,P,S<:AbstractNonLinearSolver}
 
     # Unpack some model fields
     grid, dh, dbc, mp, states, K, res, clock, solver = model.grid, model.dofhandler, model.dirichlet_bc, model.material_properties, model.material_state, model.K, model.RHS, model.clock, model.solver

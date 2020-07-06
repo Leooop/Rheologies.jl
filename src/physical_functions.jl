@@ -308,11 +308,6 @@ function compute_subcrit_damage_rate(r::Rheology, σ, τ, D)
     # println("Vr = ",Vr)
     # println("dldt = ",dldt)
     @assert dDdl >= 0
-    try
-        @assert dldt >= 0
-    catch e
-        println("KI = ",KI)
-    end
 
     return dDdl * dldt
 end

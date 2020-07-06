@@ -81,6 +81,52 @@ end
 
 
 ## ELASTO-VISCO-PLASTIC ##
+
+function assemble_cell!(re, model::Model{dim,2,TD,V,E,P}, cell, cvu, cvD, nu, nD, u▄, D▄,ue, De, De_prev) where {dim,TD,V,E,P}
+
+    reinit!(cvu, cell)
+    reinit!(cvD, cell)
+
+    cell_id = cell.current_cellid.x
+    r = model.material_properties[cell_id]
+    bodyforces = model.body_forces[cell_id].components
+
+    # We only assemble lower half triangle of the stiffness matrix and then symmetrize it.
+    @inbounds for q_point in 1:getnquadpoints(cvu)
+        dΩ = getdetJdV(cvu, q_point)
+        # get strain
+        ϵ2D = function_symmetric_gradient(cv, q_point, ue)
+        ϵ = SymmetricTensor{2,3}((i,j)->get_3D_func(i,j,ϵ2D))
+        # get damage variable
+        D = function_value(cvD, q_point, De)
+        D_prev = function_value(cvD, q_point, De_prev)
+        # get stress
+        σ = compute_σij(r,D,ϵ)
+        # get damage growth rate
+        KI = compute_KI(r.damage,σ,D)
+        dDdt = compute_subcrit_damage_rate(r, KI, D)
+        for i in 1:nu
+            #
+            δϵ2D = shape_symmetric_gradient(cv, q_point, i)
+            δϵ = SymmetricTensor{2,3}((i,j)->get_3D_func(i,j,δϵ2D))
+            δu = shape_value(cvu, q_point, i)
+            # increment residual
+            re[BlockIndex(u▄, i)] += ((δϵ ⊡ σ) - (δu ⋅ bodyforces)) * dΩ
+        end
+
+        for i in 1:nD
+            re[BlockIndex(D▄, i)] += ((D - D_prev)/model.clock.Δt - dDdt) * dΩ
+        end
+    end
+
+    # We integrate the Neumann boundary using the facevalues.
+    # We loop over all the faces in the cell, then check if the face
+    # is in our `"traction"` faceset.
+    apply_Neumann_bc!(re, model, cell, nu ; inc_sign = -)
+
+end
+
+
 function assemble_cell!(Ke, re, model::Model{dim,1,TD,V,E,P}, cell, cv, n_basefuncs, ue, noplast = false) where {dim,TD,V,E,P}
     # unpack
     cell_id = cell.current_cellid.x
