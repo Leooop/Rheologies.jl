@@ -35,6 +35,6 @@ function linear_solve!(δu,K,res,linear_solver::MINRES)
         IterativeSolvers.minres!(δu, K, res; linear_solver.kwargs...)
         return nothing
     else
-        @error "linear solver package $(linear_solver.package) is interfaced."
+        @error "linear solver package $(linear_solver.package) is not interfaced."
     end
 end

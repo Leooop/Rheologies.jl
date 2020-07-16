@@ -7,6 +7,24 @@ Stores stress and strain informations as tensorial quantities.
 abstract type MaterialState{S <: SecondOrderTensor} end
 
 
+function update_material_state!(model)
+    for cell_states in model.material_state
+        foreach(update_state!, cell_states)
+    end
+end
+
+function copy_temp_state!(model,mp)
+    for (cell_id, cell_states) in enumerate(model.material_state)
+        for (qp_id,state) in enumerate(cell_states)
+            for field in propertynames(state)
+                str_field = String(field)
+                if length(str_field) > 4
+                    (str_field[1:4] == "temp") && setproperty!(state,field,getproperty(mp[cell_id][qp_id],field))
+                end
+            end
+        end
+    end
+end
 ##### Elastic or viscous #####
 """
 `BasicMaterialState` is used for visco-elastic materials. It stores the elastic strains and stresses.
@@ -40,11 +58,6 @@ function update_state!(state::BasicMaterialState)
     state.σ = state.temp_σ
 end
 
-function update_material_state!(model)
-    for cell_states in model.material_state
-        foreach(update_state!, cell_states)
-    end
-end
 
 ##### Plastic #####
 """
@@ -92,6 +105,19 @@ function update_state!(state::PlasticMaterialState)
     state.σ = state.temp_σ
 end
 
+function set_temp_state!(r::Rheology{TT,TD,Nothing,TE,TP},clock,state,σ,ϵ) where {TT,TD,TE,TP}
+    Dᵉ = r.elasticity.Dᵉ
+    Δϵ = ϵ - state.ϵ
+    invDᵉ = get_elastic_compliance_tensor(r)
+    Δϵᵖ = Δϵ - invDᵉ⊡(σ - state.σ)
+    ϵ̇ᵖ = Δϵᵖ/clock.Δt
+    Δϵ̅ᵖ = sqrt((2/3) * ϵ̇ᵖ ⊡ ϵ̇ᵖ) * clock.Δt
+
+    state.temp_ϵᵖ = state.ϵᵖ + Δϵᵖ
+    state.temp_ϵ̅ᵖ = state.ϵ̅ᵖ + Δϵ̅ᵖ
+    state.temp_σ = σ
+    state.temp_ϵ = ϵ
+end
 ##### Damaged plastic #####
 """
 `DamagedPlasticMaterialState` is used for damaged visco-elasto-plastic materials.

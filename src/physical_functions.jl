@@ -1,5 +1,12 @@
 ### PHYSICAL FUNCTIONS ###
 include("RK4_functions.jl")
+
+get_elastic_stiffness_tensor(G,λ) = SymmetricTensor{4, 3}( (i,j,k,l) -> Dᵉ_func(i,j,k,l,G,λ))
+get_elastic_stiffness_tensor(e::Elasticity) = SymmetricTensor{4, 3}( (i,j,k,l) -> Dᵉ_func(i,j,k,l,e.G,e.λ))
+get_elastic_compliance_tensor(e::Elasticity) = SymmetricTensor{4, 3}( (i,j,k,l) -> Cᵉ_func(i,j,k,l,e.G,e.λ))
+
+get_elastic_stiffness_tensor(r::Rheology) = get_elastic_stiffness_tensor(r.elasticity)
+get_elastic_compliance_tensor(r::Rheology) = get_elastic_compliance_tensor(r.elasticity)
 # Second invariant of the deviatoric stress tensor :
 get_τ(s ; plas = :DruckerPrager) = sqrt(0.5 * s ⊡ s)
 get_τ(s,::DruckerPrager) = sqrt(0.5 * s ⊡ s)
@@ -215,61 +222,6 @@ function compute_dτdt(r::Rheology,b1,b2,db1dt,db2dt,ϵ,γ,dϵdt,dγdt)
     return r.elasticity.G * (db1dt*ϵ + b1*dϵdt + db2dt*γ + b2*dγdt)
 end
 
-# function compute_stress_tangent_damage_old(ϵ, ϵ_last, r::Rheology{T,D,Nothing,E,P}, state::MaterialState, clock::Clock, A, B) where {T,D,E,P}
-#     # unpack some parameters
-#     G = r.elasticity.G
-#     ν = r.elasticity.ν
-#
-#     # get strain invariants
-#     δϵ = ϵ - ϵ_last
-#     ϵᵥ = tr(δϵ) # first strain invariant
-#     e = dev(δϵ) # deviatoric strain tensor
-#     γ = sqrt(2*e ⊡ e) # second invariant of the deviatoric strain tensor
-#     ϵ̂ = δϵ/γ
-#
-#     # get damage constants
-#     A₁ = compute_A1(r,A)
-#     B₁ = compute_B1(r,B)
-#     Γ = compute_Γ(r,A₁,B₁)
-#
-#     # get stiffness factors
-#     Cμ = G/Γ * ( (3*(1-2ν))/(2*(1+ν)) + A₁^2/2 - A₁*B₁*ϵᵥ/(2γ) )
-#     Cλ = G/Γ * ( 3ν/(1+ν) + B₁^2/2 - A₁^2/3 + A₁*B₁*ϵᵥ/γ + 2A₁*B₁*ϵᵥ^3/(9γ^3) )
-#     Cσ = - G/Γ * ( A₁*B₁ + 2A₁*B₁*ϵᵥ^2/(3γ^2) )
-#     Cσσ = G/Γ * (2A₁*B₁*ϵᵥ/γ)
-#
-#     # functional form of the stiffness tensor
-#     C_func(i,j,k,l) = Cμ * ( δ(k,i)*δ(l,j) + δ(l,i)*δ(k,j) ) +
-#                       Cλ * ( δ(i,j)*δ(k,l) ) +
-#                       Cσ * ( ϵ̂[i,j]*δ(k,l) + δ(i,j)*ϵ̂[k,l] ) +
-#                       Cσσ * (ϵ̂[i,j]*ϵ̂[k,l])
-#
-#     # assemble the tensor
-#     C = SymmetricTensor{4,3}(C_func)
-#
-#
-#     # stress update :
-#     I2D = SymmetricTensor{2,3}(δ)
-#     σ1 = C ⊡ δϵ
-#     σ2 = G/Γ * ((3*(1-2ν))/(1+ν) + A₁^2 - A₁*B₁*ϵᵥ/γ) * ϵ +
-#                (3ν/(1+ν) + B₁^2/2 - A₁^2/3 + A₁*B₁*ϵᵥ/(3γ)) * ϵᵥ * I2D -
-#                (A₁*B₁/2)*γ*I2D
-#     #println(all(σ1 .≈ σ2))
-#     state.temp_σ += σ1
-#
-#     # damage update
-#     p = 1/3 * tr(state.temp_σ)
-#     s = dev(state.temp_σ)
-#     τ = sqrt(1/2 * s ⊡ s)
-#     KI = compute_KI(r::Rheology,p,τ,A,B)
-#     dDdt = compute_subcrit_damage_rate(r::Rheology, KI, state.D)
-#     ΔD = dDdt*clock.Δt
-#     state.temp_D = min(state.D + ΔD, 1.0)
-#
-#
-#     return state.temp_σ, C
-# end
-
 function compute_dDdl(r::Rheology,D)
     d = r.damage
     return (3*D^(2/3)*d.D₀^(1/3))/(cosd(d.ψ)*d.a)
@@ -310,6 +262,29 @@ function compute_subcrit_damage_rate(r::Rheology, σ, τ, D)
     @assert dDdl >= 0
 
     return dDdl * dldt
+end
+
+function get_damage_constrained_Δt(model,u,ΔD_max)
+    nu,nD = getnbasefunctions.(model.cellvalues_tuple)
+    nqp = getnquadpoints(model.cellvalues_tuple[2])
+    Δt_max = 1e9
+    for cell in CellIterator(model.dofhandler)
+        cellid = cell.current_cellid.x
+        states = model.material_state[cellid]
+        r = model.material_properties[cellid]
+
+        cell_dofs = celldofs(cell)
+        ue = u[cell_dofs]
+        De = ue[nu+1:end]
+        for qp in nqp
+            state = states[qp]
+            D = function_value(model.cellvalues_tuple[2],qp,De)
+            KI = compute_KI(r,state.σ,D)
+            dDdt = compute_subcrit_damage_rate(r, KI, D)
+            Δt_max = min(ΔD_max/dDdt,Δt_max)
+        end
+    end
+    return Δt_max
 end
 
 # function compute_subcrit_damage_rate(r::Rheology, σ::T, D) where {T<:AbstractArray}
@@ -385,6 +360,10 @@ end
 function compute_σij(r,A1,B1,Γ,ϵij)
     # TODO make a visco elastic version of this function
 
+    if all(x->x==0,ϵij)
+        return Tensor{2,3}(ϵij)
+    end
+
     G = r.elasticity.G
     ν = r.elasticity.ν
     Id = SymmetricTensor{2,3}(δ)
@@ -403,6 +382,9 @@ end
 function compute_σij(r,D,ϵij)
     # TODO make a visco elastic version of this function
 
+    if all(x->x==0,ϵij)
+        return Tensor{2,3}(ϵij)
+    end
     # unpack
     G = r.elasticity.G
     ν = r.elasticity.ν

@@ -21,4 +21,4 @@ K_from_Gν(G,ν) = 2G*(1 + ν) / (3*(1 - 2ν))
 λ_from_Gν(G,ν) = 2G*ν / (1 - 2ν)
 
 Dᵉ_func(i,j,k,l,G,λ) = λ*(δ(i,j)*δ(k,l)) + G*(δ(i,k)*δ(j,l) + δ(i,l)*δ(j,k))
-get_elastic_stiffness_tensor(G,λ) = SymmetricTensor{4, 3}( (i,j,k,l) -> Dᵉ_func(i,j,k,l,G,λ))
+Cᵉ_func(i,j,k,l,G,λ) = (λ/(2G*(3λ + 2G)))*(δ(i,j)*δ(k,l)) + (1/2G)*(δ(i,k)*δ(j,l) + δ(i,l)*δ(j,k))

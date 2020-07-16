@@ -1,5 +1,4 @@
 ### TANGENT OPERATORS ###
-get_elastic_stiffness_tensor(e::Elasticity{Float64}) = SymmetricTensor{4, 3}( (i,j,k,l) -> Dᵉ_func(i,j,k,l,e.G,e.λ))
 
 """
     compute_stress_tangent(ϵ, r::Rheology{T,::Nothing,::Nothing,::Elasticity,::DruckerPrager}, s::MaterialState ; elastic_only = false) where {T,D,V<:Nothing,E::Elasticity,P::DruckerPrager}
@@ -462,8 +461,8 @@ function compute_stress_tangent(ϵij,
 
             #println("sigma diff : ", σ_temp - u_vec[end][4])
             #println("tau diff : ", τ_temp - u_vec[end][5])
-
-            Δϵᵖ = Δϵ - inv(Cᵉ)⊡(s.temp_σ - s.σ) # damage strain increment
+            invCᵉ = get_elastic_compliance_tensor(r)
+            Δϵᵖ = Δϵ - invCᵉ⊡(s.temp_σ - s.σ) # damage strain increment
             s.temp_ϵ = ϵij
             s.temp_ϵᵖ = s.ϵᵖ + Δϵᵖ # plastic strain
             # Construction of the tangent operator ∂σ_n/∂ϵ_n at {D = D_n+1}:
@@ -597,8 +596,8 @@ function compute_stress_tangent(ϵij,
                 println("p diff : ", p_temp - u_vec[end][4])
                 println("tau diff : ", τ_temp - u_vec[end][5])
             end
-
-            Δϵᵖ = Δϵ - inv(Cᵉ)⊡(s.temp_σ - s.σ) # damage strain increment
+            invCᵉ = get_elastic_compliance_tensor(r)
+            Δϵᵖ = Δϵ - invCᵉ⊡(s.temp_σ - s.σ) # damage strain increment
             s.temp_ϵ = ϵij
             s.temp_ϵᵖ = s.ϵᵖ + Δϵᵖ # plastic strain
             # Construction of the tangent operator ∂σ_n/∂ϵ_n at {D = D_n+1}:
@@ -731,6 +730,7 @@ function compute_stress_tangent(ϵij,
 
         if s.temp_D > s.D
             s.temp_σ = compute_σij(r,s.temp_D,ϵij) # changed from ϵᵉ_trial to ϵ
+            #invCᵉ = get_elastic_compliance_tensor(r) # TODO add a viscoelastic compliance tensor getter
             Δϵᵖ = Δϵ - inv(Cᵛᵉ)⊡(s.temp_σ - s.σ) # damage strain increment
             s.temp_ϵ = ϵij
             s.temp_ϵᵖ = s.ϵᵖ + Δϵᵖ # plastic strain
@@ -762,4 +762,32 @@ function compute_stress_tangent(ϵij,
         #s.temp_ϵ̅ᵖ = s.ϵ̅ᵖ + Δϵ̅ᵖ # accumulated plastic strain
         #s.temp_σ = σ_trial - Δλ * Dᵉ⊡∇Q
     end
+end
+
+function compute_jacobian(f!,u,eps=1e-9)
+
+    Iv = Int[]
+    Jv = Int[]
+    Vv = Float64[]
+    len_u = length(u)
+    δu = Vector{Float64}(undef,len_u)
+    ∂f∂u_j = similar(δu)
+    f_up = similar(δu)
+    f_down = similar(δu)
+    @inbounds for j in 1:len_u
+        fill!(δu,0.0)
+        δu[j] = eps
+        f!(f_up, u .+ (δu./2))
+        f!(f_down, u .- (δu./2))
+        @. ∂f∂u_j = ( f_up - f_down ) /  δu[j]
+        for i in 1:len_u
+            if ∂f∂u_j[i] != 0.0
+                push!(Iv,i)
+                push!(Jv,j)
+                push!(Vv,∂f∂u_j[i])
+            end
+        end
+    end
+    J = sparse(Iv,Jv,Vv,len_u,len_u)
+    return J
 end

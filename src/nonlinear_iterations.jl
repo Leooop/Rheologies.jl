@@ -1,7 +1,9 @@
-function nonlinear_solve!(u, u_prev, δu, model::Model{dim,2,D,V,E,P,S}, restart_flag) where {dim,N,D,V,E,P,S<:AbstractNonLinearSolver}
+nonlinear_solve!(u, u_prev, δu, model::Model{dim,2,D,V,E,P,S}, restart_flag) where {dim,D,V,E,P,S<:AbstractLinearSolver} = @error "Please choose a non linear solver"
+
+function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{DIM,2,TD,TV,TE,TP,TS}, restart_flag) where {DIM,TD,TV,TE,TP,TS<:AbstractNonLinearSolver}
 
     # Unpack some model fields
-    grid, dh, dbc, mp, states, K, res, clock, solver = model.grid, model.dofhandler, model.dirichlet_bc, model.material_properties, model.material_state, model.K, model.RHS, model.clock, model.solver
+    grid, dh, dbc, mp, states, res, K, clock, solver = model.grid, model.dofhandler, model.dirichlet_bc, model.material_properties, model.material_state, model.RHS, model.K, model.clock, model.solver
 
     println("Δt in nlsolve : ", clock.Δt)
 
@@ -26,22 +28,25 @@ function nonlinear_solve!(u, u_prev, δu, model::Model{dim,2,D,V,E,P,S}, restart
     while true; newton_itr += 1
         @timeit "Newton iter" begin
             #@timeit "assemble"
-            tt = @elapsed doassemble_res!(model::Model{dim,N,D,V,E,P}, nbasefuncs, u ; noplast = (newton_itr == 0))
+            if newton_itr == 0
+                tt = @elapsed doassemble_elast!(res, K, model, nbasefuncs, u, u_prev)
+            else
+                tt = @elapsed doassemble_res!(res, model, nbasefuncs, u, u_prev)
+            end
             println("assemble time : ", tt)
             # compute residual norm
             norm_res = norm(res[JuAFEM.free_dofs(dbc)])
 
             # print current Newton iteration
-            print("Iteration: $newton_itr \tresidual: $(@sprintf("%.8f", norm_res))\n")
+            print("\nIteration: $newton_itr \tresidual: $(@sprintf("%.8f", norm_res))\n")
 
             #### Max D TEST :
-            if D <: Damage
-                max_ΔD = 0
-                for cell_states in states
-                    cell_temp_D = mean([state.temp_D for state in cell_states])
-                    cell_D = mean([state.D for state in cell_states])
-                    max_ΔD = max(max_ΔD,cell_temp_D - cell_D)
-                end
+            if model.material_properties[1].damage isa Damage
+                dofs_D = get_field_dofs(:D,model)
+                D = u[dofs_D]
+                D_prev = u_prev[dofs_D]
+                max_ΔD = maximum(D.-D_prev)
+                @assert all(D.-D_prev .>= 0)
                 print("\t max ΔD = ", max_ΔD, "\n")
             end
             ####
@@ -76,11 +81,72 @@ function nonlinear_solve!(u, u_prev, δu, model::Model{dim,2,D,V,E,P,S}, restart
                 return restart_flag
             end
 
+            if newton_itr == 0
+                @timeit "apply_dbc" apply_zero!(K, res, dbc)
+                @timeit "linear_solve" δu .= solver.linear_solver(K,-res,model)
 
-            ### Linear Solve for δu ###
-            @timeit "apply_dbc" apply_zero!(K, res, dbc)
-            #@timeit "linear_solve" δu .= Symmetric(K) \ -res
-            @timeit "linear_solve" δu .= solver.linear_solver(K,-res,model)
+                ##### TEST #####
+                dofs_D = get_field_dofs(:D,model)
+                println("δD elast extrema = ", extrema(δu[dofs_D]))
+                ################
+            else
+
+                ### Compute Jacobian using finite difference ###
+                f!(res,u) = doassemble_res!(res, model, nbasefuncs, u, u_prev)
+                #f_trailing_args!(res,u,model,nbasefuncs,u_prev) = doassemble_res!(res, model, nbasefuncs, u, u_prev)
+                f(u) = (res = similar(u) ; doassemble_res!(res, model, nbasefuncs, u, u_prev) ; return res)
+                print(" hand made Jac time : ")
+                @time J = compute_jacobian(f!,u,1e-6)
+                println("hand made Jacobian L2-norm conditioning = ", cond(Array(J)))
+
+                # print(" FiniteDiff Jac time : ")
+                # @time begin
+                #     # @eval using FiniteDifferences #, FiniteDiff, SparsityDetection, SparseDiffTools
+                #     # input = rand(length(u))
+                #     # output = similar(input)
+                #     # sparsity_pattern = jacobian_sparsity(f!,output,input)
+                #     # sparsejac = Float64.(sparse(sparsity_pattern))
+                #     # colors = matrix_colors(sparsejac)
+                #     # J2 = FiniteDiff.JacobianCache(u,colorvec=colors,sparsity=sparsejac)
+                #     # J2 = FiniteDiff.finite_difference_jacobian(f,u)
+                #     # fdm = FiniteDifferences.central_fdm(2,1)
+                #     # J2 = FiniteDifferences.jacobian(fdm, f, u)[1]
+                #
+                #     # println("FiniteDiff Jacobian L2-norm conditioning = ", cond(J2))
+                #     # println("max difference 2 jacs = ", maximum(abs.(J.-J2)))
+                #     # J = sparse(J2)
+                # end
+
+
+                ### Apply zeros accordingly to dbcs ###
+                @timeit "apply_dbc" apply_zero!(J, res, dbc)
+
+                println("presence of nans : ", any(isnan.(J)))
+                println("maximum((J'.-J)./J) : ", maximum([J[i,j].-J[j,i]./J[i,j] for i in length(res), j in length(res) if !isnan(J[i,j])]))
+                println("positive definiteness of sym(J) : ", isposdef(Symmetric(J)))
+                #@timeit "linear_solve" δu .= Symmetric(K) \ -res
+
+                ## Preconditioning :
+                # using Preconditioners
+                # P = DiagonalPreconditioner(J) # similar to the following
+                P = Diagonal(J)
+                invP = inv(P)
+                println("FiniteDiff preconditioned Jacobian L2-norm conditioning = ", cond(Array(invP*J)))
+                @timeit "linear_solve" δu .= solver.linear_solver(invP*J,Array(-invP*res),model)
+                #@timeit "linear_solve" δu .= solver.linear_solver(J,-res,model)
+
+                ##### TEST #####
+                dofs_D = get_field_dofs(:D,model)
+                println("δD damaged extrema = ", extrema(δu[dofs_D]))
+                # TODO remove it after test
+                # for i in dofs_D
+                #     if δu[i] < 0
+                #         δu[i] = 0.0
+                #     end
+                # end
+                # println("δD damaged extrema corrected = ", extrema(δu[dofs_D]))
+                ################
+            end
             # @timeit "linear_solve" begin
             #     ## TODO better
             #     Pl = Preconditioners.AMGPreconditioner(Symmetric(K))
@@ -88,11 +154,24 @@ function nonlinear_solve!(u, u_prev, δu, model::Model{dim,2,D,V,E,P,S}, restart
             # end
             # displacement correction
             u .+= δu
+
+            # Make sure that the elastic solve didn't affect Damage
+            # if newton_itr == 0
+            #     dofs_D = get_field_dofs(:D,model)
+            #     u[dofs_D] .= u_prev[dofs_D]
+            # end
         end
+        ###### TEST
+        vtk_grid("TEST_u-D_iter$(newton_itr)", model.dofhandler) do vtkfile
+            vtk_point_data(vtkfile, model.dofhandler, u)
+        end
+        ######
     end
 end
 
-function nonlinear_solve!(u, δu, model::Model{dim,1,D,V,E,P,S}, restart_flag) where {dim,N,D,V,E,P,S<:AbstractNonLinearSolver}
+
+
+function nonlinear_solve!(u::Vector, uprev::Vector, δu::Vector, model::Model{DIM,1,TD,TV,TE,TP,TS}, restart_flag) where {DIM,TD,TV,TE,TP,TS<:AbstractNonLinearSolver}
 
     # Unpack some model fields
     grid, dh, dbc, mp, states, K, res, clock, solver = model.grid, model.dofhandler, model.dirichlet_bc, model.material_properties, model.material_state, model.K, model.RHS, model.clock, model.solver
@@ -119,16 +198,20 @@ function nonlinear_solve!(u, δu, model::Model{dim,1,D,V,E,P,S}, restart_flag) w
     while true; newton_itr += 1
         @timeit "Newton iter" begin
             #@timeit "assemble"
-            tt = @elapsed doassemble!(model::Model{dim,N,D,V,E,P}, nbasefuncs, u ; noplast = (newton_itr == 0))
+            tt = @elapsed doassemble!(model::Model{DIM,1,TD,TV,TE,TP}, nbasefuncs, u ; noplast = (newton_itr == 0))
             println("assemble time : ", tt)
             # compute residual norm
             norm_res = norm(res[JuAFEM.free_dofs(dbc)])
 
-            # print current Newton iteration
-            print("Iteration: $newton_itr \tresidual: $(@sprintf("%.8f", norm_res))\n")
+            # print current Newton iteration :
+            if newton_itr > 0
+                print("\nIteration: $newton_itr \t residual: $(@sprintf("%.8f", norm_res))\n")
+            else
+                print("First elastic iteration: $newton_itr \t residual: $(@sprintf("%.8f", norm_res))\n")
+            end
 
             #### Max D TEST :
-            if D <: Damage
+            if TD <: Damage
                 max_ΔD = 0
                 for cell_states in states
                     cell_temp_D = mean([state.temp_D for state in cell_states])
@@ -181,6 +264,7 @@ function nonlinear_solve!(u, δu, model::Model{dim,1,D,V,E,P,S}, restart_flag) w
             # end
             # displacement correction
             u .+= δu
+
         end
     end
 end

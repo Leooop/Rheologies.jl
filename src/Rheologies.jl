@@ -16,7 +16,12 @@ module Rheologies
     using StaticArrays
     using StructArrays
     using LinearAlgebra
+    #using LoopVectorization
 
+    #import KrylovMethods
+    #import IterativeSolvers
+    #using IncompleteLU
+    #import LinearMaps
     # Export
     #import FileIO
     #import MAT
@@ -25,7 +30,6 @@ module Rheologies
     #import MUMPSjInv
     #import Preconditioners
 
-    include("convenience_functions.jl")
     include("types/types.jl")
     include("physical_functions.jl")
     include("tangent_operators.jl")

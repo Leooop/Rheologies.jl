@@ -10,7 +10,7 @@ function solve(model::Model; initial_values = nothing, output_writer = nothing, 
     #reinit!(output_writer,model)
 
     # iterate over time
-    u = iterate(model,output_writer)
+    u = iterate(model,output_writer,initial_values)
 
     # print timings of code annotated with @timeit macro
     (log == true) && print_timer(title = "Analysis with $(getncells(model.grid)) elements", linechars = :ascii)
@@ -19,7 +19,7 @@ function solve(model::Model; initial_values = nothing, output_writer = nothing, 
 end
 
 
-function iterate(model::Model{2,N,Nothing,Nothing,E,Nothing},initial_values, output_writer) where {N,E<:Elasticity}
+function iterate(model::Model{2,N,Nothing,Nothing,E,Nothing}, output_writer, initial_values = nothing) where {N,E<:Elasticity}
     @info "Rheology is purely elastic. Displacement field is solved once at the end of the requested time interval"
     c = model.clock
     c.current_time = c.tspan[2]
@@ -47,7 +47,7 @@ function iterate(model::Model{2,N,Nothing,Nothing,E,Nothing},initial_values, out
     return u
 end
 
-function iterate(model::Model{2,2,D,V,E,P}, initial_values, output_writer) where {N,D,V,E,P}
+function iterate(model::Model{2,2,D,V,E,P}, output_writer, initial_values = nothing) where {N,D,V,E,P}
 
     # Unpack some model fields
     dh, dbc, cv, clock = model.dofhandler, model.dirichlet_bc, model.cellvalues_tuple, model.clock
@@ -59,27 +59,30 @@ function iterate(model::Model{2,2,D,V,E,P}, initial_values, output_writer) where
         get_initial_solution_vector!(u,dh,initial_values)
     end
     u_converged = copy(u) # backup solution vector
-    δu = zeros(n_dofs)  # displacement correction
+    δu = similar(u)
+
+    # Tuple of the number of shape functions per element and per field
+    nbasefuncs = getnbasefunctions.(model.cellvalues_tuple)
+
 
     while clock.current_time <= clock.tspan[2]
         @timeit "time iteration" begin
 
-            timestep!(clock) # update clock
+            Δt_max_damage = get_damage_constrained_Δt(model,u,0.3)
+            println("Δt_max_damage = ",Δt_max_damage)
+            timestep!(clock,Δt_max_damage) # update clock
 
             print("\n TIME ITERATION $(clock.iter)\n",
             " current simulation time = $(clock.current_time):\n",
             " timestep = $(clock.Δt)\n")
 
+            restart_flag = false
 
             # Apply dirichlet bc and iteratively solve for u :
             # @timeit "nonlinear solve"
-            #restart_flag = nonlinear_solve!(u,u_converged,δu,model,restart_flag)
-            update!(dbc, clock.current_time) # evaluates the D-bndc at time t
-            apply!(u, dbc)  # set the prescribed values in the solution vector
-            f!(res,u) = doassemble!(res, model, getnbasefunctions.(model.cellvalues_tuple), u, u_converged)
-            sol = NLsolve.nlsolve(f!, u)
+            restart_flag = nonlinear_solve!(u,u_converged,δu,model,restart_flag)
 
-            if sol.x_converged == false
+            if restart_flag == true
                 u .= u_converged
                 undo_timestep!(clock)
                 clock.Δt *= clock.Δt_fact_down # decreased timestep
@@ -92,6 +95,42 @@ function iterate(model::Model{2,2,D,V,E,P}, initial_values, output_writer) where
                 u_converged .= u
             end
 
+
+            # ##### NLsolve VERSION :#####
+            # perform_elastic_solve!(u,model)
+            #
+            # ###### TEST
+            # # vtk_grid("TEST_u-D_after_elastic_solve_it_$(clock.iter)", model.dofhandler) do vtkfile
+            # #     vtk_point_data(vtkfile, model.dofhandler, u)
+            # # end
+            # #write_output!(model, u, output_writer) # output
+            # #println("temp_σyy = ", model.material_state[15][1].temp_σ[2,2])
+            # #println("temp_ϵyy = ", model.material_state[15][1].temp_ϵ[2,2])
+            # ######
+            #
+            # f!(res,u) = doassemble_res!(res, model, nbasefuncs, u, u_converged)
+            # tt = @elapsed (sol = NLsolve.nlsolve(f!, u, method = :newton))
+            # println("nlsolve time = ", tt)
+            #
+            # if NLsolve.converged(sol) == false
+            #     println(sol)
+            #     u .= u_converged
+            #     undo_timestep!(clock)
+            #     clock.Δt *= clock.Δt_fact_down # decreased timestep
+            # else # converged
+            #     u .= sol.zero # converged solution
+            #     println(sol)
+            #     update_material_state!(model) # update converged state values
+            #     @timeit "export" write_output!(model, u, output_writer) # output
+            #
+            #     clock.Δt *= clock.Δt_fact_up # increase timestep
+            #     println(clock.Δt)
+            #     u_converged .= u
+            # end
+
+            ############################
+
+
             clock.current_time == clock.tspan[2] && break # end time loop if requested end time is reached
 
         end
@@ -99,7 +138,72 @@ function iterate(model::Model{2,2,D,V,E,P}, initial_values, output_writer) where
     return u
 end
 
-function iterate(model::Model{2,1,D,V,E,P}, output_writer) where {N,D,V,E,P}
+# TODO check the performances penalty magnitude of such an approach : one solution could
+# be to build a container containing most EP_model fields and to reuse it for each subsequent elastic solve
+"The current strategy is to convert our damaged model into an equivalent undamaged model and to use the
+existing linear elastic solves implemented for undamaged rheologies"
+function perform_elastic_solve!(u,model)
+
+    tt = @elapsed begin
+    # model parameters
+    u_interp = typeof(model.dofhandler.field_interpolations[1]).parameters[3]
+    el_geom = typeof(model.grid.cells[1])
+    variables = PrimitiveVariables{1}((:u,), (u_interp,), el_geom)
+    dh = create_dofhandler(model.grid, variables)
+    dbc = modify_dirichlet_bc(dh, model.dirichlet_bc)
+    mp = convert_to_undamaged_material_properties(model.grid,model.material_properties)
+    K = create_sparsity_pattern(dh)
+    RHS = zeros(ndofs(dh))
+
+    EP_model = Model( model.grid,
+                      dh,
+                      dbc,
+                      model.neumann_bc,
+                      model.body_forces,
+                      (model.cellvalues_tuple[1],),
+                      model.facevalues,
+                      mp,
+                      model.material_state,
+                      K,
+                      RHS,
+                      model.clock,
+                      model.solver,
+                      model.multithreading )
+    end
+    println("EP_model building = ", tt)
+
+
+    dbc, K, res, solver, clock = EP_model.dirichlet_bc, EP_model.K, EP_model.RHS, EP_model.solver, EP_model.clock
+    nbasefuncs = getnbasefunctions(EP_model.cellvalues_tuple[1])
+    δu = similar(res)
+
+    update!(dbc, clock.current_time) #update newly formed dirichlet bc in EP_model
+    dofs_u = get_field_dofs(:u, model) # dofs associated with displacement field in u (u-D formulation)
+
+    tt = @elapsed doassemble!(EP_model, nbasefuncs, u[dofs_u] ; noplast = true)
+    println("assemble time : ", tt)
+    # compute residual norm
+    norm_res = norm(res[JuAFEM.free_dofs(dbc)])
+    print("First elastic iteration   \t residual: $(@sprintf("%.8f", norm_res))\n")
+
+    ### Linear Solve for δu ###
+    apply_zero!(K, res, dbc)
+    δu .= solver.linear_solver(K,-res,EP_model)
+    # displacement correction
+
+    @assert length(dofs_u) == length(δu)
+    u[dofs_u] .+= δu
+
+    # update initial model temporary state
+    rcell, rqp = rand(1:getncells(model.grid)), rand(1:getnquadpoints(model.cellvalues_tuple[1]))
+    copy_temp_state!(model,EP_model.material_state)
+    @assert EP_model.material_state[rcell][rqp].temp_σ == model.material_state[rcell][rqp].temp_σ
+
+    return nothing
+end
+
+
+function iterate(model::Model{2,1,D,V,E,P}, output_writer, initial_values = nothing) where {N,D,V,E,P}
 
     # Unpack some model fields
     dh, dbc, cv, clock = model.dofhandler, model.dirichlet_bc, model.cellvalues_tuple, model.clock

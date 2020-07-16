@@ -80,9 +80,12 @@ function assemble_cell!(Ke, fe, model::Model{dim,2,Nothing,Nothing,E,Nothing}, c
 end
 
 
-## ELASTO-VISCO-PLASTIC ##
+## DAMAGED-ELASTO-VISCO-PLASTIC ##
+# import Base.getindex
+# Base.getindex(barray::PseudoBlockArray{Float64,1,Array{Float64,1},Tuple{BlockedUnitRange{Array{Int64,1}}}}, blockindex::BlockIndex{1}) =
+# getindex(barray::PseudoBlockArray{T,N,R,BS} where BS<:Tuple{Vararg{AbstractUnitRange{Int64},N}} where R<:AbstractArray{T,N}, blockindex::BlockIndex{N}) where {T, N}
 
-function assemble_cell!(re, model::Model{dim,2,TD,V,E,P}, cell, cvu, cvD, nu, nD, u▄, D▄,ue, De, De_prev) where {dim,TD,V,E,P}
+function assemble_res_cell!(re, model::Model{dim,2,TD,Nothing,TE,TP}, cell, cvu, cvD, nu, nD, u▄, D▄, ue, De, De_prev) where {dim,TD,TE,TP}
 
     reinit!(cvu, cell)
     reinit!(cvD, cell)
@@ -93,29 +96,93 @@ function assemble_cell!(re, model::Model{dim,2,TD,V,E,P}, cell, cvu, cvD, nu, nD
 
     # We only assemble lower half triangle of the stiffness matrix and then symmetrize it.
     @inbounds for q_point in 1:getnquadpoints(cvu)
+
+        # get qp state
+        state = model.material_state[cell_id][q_point]
+
+        # get Gauss differential term
         dΩ = getdetJdV(cvu, q_point)
+
         # get strain
-        ϵ2D = function_symmetric_gradient(cv, q_point, ue)
+        ϵ2D = function_symmetric_gradient(cvu, q_point, ue)
         ϵ = SymmetricTensor{2,3}((i,j)->get_3D_func(i,j,ϵ2D))
+
         # get damage variable
         D = function_value(cvD, q_point, De)
         D_prev = function_value(cvD, q_point, De_prev)
-        # get stress
-        σ = compute_σij(r,D,ϵ)
-        # get damage growth rate
-        KI = compute_KI(r.damage,σ,D)
-        dDdt = compute_subcrit_damage_rate(r, KI, D)
-        for i in 1:nu
-            #
-            δϵ2D = shape_symmetric_gradient(cv, q_point, i)
-            δϵ = SymmetricTensor{2,3}((i,j)->get_3D_func(i,j,δϵ2D))
-            δu = shape_value(cvu, q_point, i)
-            # increment residual
-            re[BlockIndex(u▄, i)] += ((δϵ ⊡ σ) - (δu ⋅ bodyforces)) * dΩ
-        end
 
-        for i in 1:nD
-            re[BlockIndex(D▄, i)] += ((D - D_prev)/model.clock.Δt - dDdt) * dΩ
+        ###### TEST
+        if D <= r.damage.D₀
+            println("cell_id = ",cell_id)
+            println("ϵ = ",ϵ)
+            println("D = ",D)
+            println("all_D_qp = ", De)
+        end
+        ######
+        if D < 1
+            # get stress
+            σ = compute_σij(r,D,ϵ)
+
+            #### TEST
+            if D <= r.damage.D₀
+                println("σ = ",σ)
+            end
+            ####
+
+            # get damage growth rate
+            KI = compute_KI(r.damage,state.σ,D_prev)
+
+            ###### TEST
+            if isnan(KI)
+                println("cell_id = ",cell_id) # 1
+                println("ϵ = ",ϵ)
+                println("σ = ",σ) # All NaN !!!
+                println("D = ",D) # OK
+            end
+            ######
+
+            dDdt = compute_subcrit_damage_rate(r, KI, D)
+
+            for i in 1:nu
+                #
+                δϵ2D = shape_symmetric_gradient(cvu, q_point, i)
+                δϵ = SymmetricTensor{2,3}((i,j)->get_3D_func(i,j,δϵ2D))
+                δu = shape_value(cvu, q_point, i)
+                # increment residual
+                #re[BlockIndex(u▄, i)] += ((δϵ ⊡ σ) - (δu ⋅ bodyforces)) * dΩ
+                re[i] += ((δϵ ⊡ σ) - (δu ⋅ bodyforces)) * dΩ
+            end
+
+            for i in 1:nD
+                #re[BlockIndex(D▄, i)] += ((D - D_prev)/model.clock.Δt - dDdt) * dΩ
+                #(D <= D_prev) && (regularization_term = abs(D-D_prev))
+
+                re[i+nu] += ((D - D_prev)/model.clock.Δt - dDdt ) * dΩ #
+            end
+
+            # update qp state
+            set_temp_state!(r,model.clock,state,σ,ϵ)
+
+        else # loss of cohesion, drucker-Prager rheology
+            rp = Rheology(nothing,nothing,r.elasticity,r.plasticity)
+            σ, _ = compute_stress_tangent(ϵ, rp, state, model.clock, noplast = false)
+            dDdt = 0.0
+            for i in 1:nu
+                #
+                δϵ2D = shape_symmetric_gradient(cvu, q_point, i)
+                δϵ = SymmetricTensor{2,3}((i,j)->get_3D_func(i,j,δϵ2D))
+                δu = shape_value(cvu, q_point, i)
+                # increment residual
+                #re[BlockIndex(u▄, i)] += ((δϵ ⊡ σ) - (δu ⋅ bodyforces)) * dΩ
+                re[i] += ((δϵ ⊡ σ) - (δu ⋅ bodyforces)) * dΩ
+            end
+
+            for i in 1:nD
+                #re[BlockIndex(D▄, i)] += ((D - D_prev)/model.clock.Δt - dDdt) * dΩ
+                #(D <= D_prev) && (regularization_term = abs(D-D_prev))
+
+                re[i+nu] += ((D - D_prev)/model.clock.Δt - dDdt ) * dΩ #
+            end
         end
     end
 
@@ -126,6 +193,59 @@ function assemble_cell!(re, model::Model{dim,2,TD,V,E,P}, cell, cvu, cvD, nu, nD
 
 end
 
+function assemble_cell_elast!(re, Ke, model::Model{DIM,2,TD,V,E,P}, cell, cvu, cvD, nu, nD, u▄, D▄, ue, De, De_prev) where {DIM,TD,V,E,P}
+
+    reinit!(cvu, cell)
+    reinit!(cvD, cell)
+
+    cell_id = cell.current_cellid.x
+    r = model.material_properties[cell_id]
+    bodyforces = model.body_forces[cell_id].components
+
+    # We only assemble lower half triangle of the stiffness matrix and then symmetrize it.
+    @inbounds for q_point in 1:getnquadpoints(cvu)
+
+        # get qp state
+        state = model.material_state[cell_id][q_point]
+
+        # get Gauss differential term
+        dΩ = getdetJdV(cvu, q_point)
+
+        # get strain
+        ϵ2D = function_symmetric_gradient(cvu, q_point, ue)
+        ϵ = SymmetricTensor{2,3}((i,j)->get_3D_func(i,j,ϵ2D))
+        σ, C = compute_stress_tangent(ϵ, r, state, model.clock, noplast = true)
+        D_prev = function_value(cvD, q_point, De_prev)
+
+        for i in 1:nu
+            #
+            δϵ2D = shape_symmetric_gradient(cvu, q_point, i)
+            δϵ = SymmetricTensor{2,3}((i,j)->get_3D_func(i,j,δϵ2D))
+            δu = shape_value(cvu, q_point, i)
+            # increment residual
+            #re[BlockIndex(u▄, i)] += ((δϵ ⊡ σ) - (δu ⋅ bodyforces)) * dΩ
+            re[i] += ((δϵ ⊡ σ) - (δu ⋅ bodyforces)) * dΩ
+            δϵC = δϵ ⊡ C
+            for j in 1:i
+                Δϵ2D = shape_symmetric_gradient(cvu, q_point, j)
+                Δϵ = SymmetricTensor{2,3}((i,j)->get_3D_func(i,j,Δϵ2D))
+                Ke[BlockIndex((u▄, u▄), (i, j))] += δϵC ⊡ Δϵ * dΩ
+            end
+        end
+
+        for i in 1:nD
+            #re[BlockIndex(D▄, i)] += ((D - D_prev)/model.clock.Δt - dDdt) * dΩ
+            re[i+nu] += eps(Float64) * dΩ
+            Ke[BlockIndex((D▄, D▄), (i, i))] = -1e20 # zero_diagonal to prevent update of D
+        end
+    end
+    symmetrize_lower!(Ke) #when j in 1:i
+    # We integrate the Neumann boundary using the facevalues.
+    # We loop over all the faces in the cell, then check if the face
+    # is in our `"traction"` faceset.
+    apply_Neumann_bc!(re, model, cell, nu ; inc_sign = -)
+
+end
 
 function assemble_cell!(Ke, re, model::Model{dim,1,TD,V,E,P}, cell, cv, n_basefuncs, ue, noplast = false) where {dim,TD,V,E,P}
     # unpack

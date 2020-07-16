@@ -2,6 +2,7 @@
 using Base: @kwdef
 import Base: show, getproperty
 
+include("convenience_functions.jl")
 # aliases
 Maybe(T)=Union{T,Nothing}
 const F64orFunc = Union{Float64,Function}

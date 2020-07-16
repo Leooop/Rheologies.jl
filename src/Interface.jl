@@ -87,45 +87,29 @@ function create_dirichlet_bc(dh::DofHandler, bc_dirichlet::Dict)
     return dbc
 end
 
-# function setup_model_old(grid::Grid, variables::PrimitiveVariables,
-#                      quad_order::Int, quad_type::Symbol,
-#                      bc_dicts::BoundaryConditions, body_forces::BodyForces, rheology::Rheology)
-#     # get elements geometry
-#     el_geom = getcelltype(grid)
-#
-#     # By default geometry interpolation is quadratic only if there are nodes in edges centers.
-#     interp_geom = JuAFEM.default_interpolation(el_geom) #
-#
-#     # quadrature rules
-#     qr, qr_face = get_quadrature_rules(quad_order, quad_type, el_geom)
-#
-#     # Dof handler and setup dirichlet bc
-#     dh = create_dofhandler(grid, variables)
-#     bcd = create_dirichlet_bc(dh, bc_dicts.dirichlet)
-#
-#     # cellvalues
-#     cellvalues, facevalues = create_values(qr, qr_face, interp_geom, variables.interpolations...)
-#
-#     # sparsity pattern
-#     K = create_sparsity_pattern(dh);
-#     RHS = zeros(ndofs(dh))
-#
-#     mp = create_material_properties(grid, rheology)
-#     ms = create_material_states(rheology,grid,cellvalues[1])
-#     bf = create_body_forces_field(grid, body_forces)
-#
-#     return dh, bcd, cellvalues, facevalues, mp, ms, bf, K, RHS
-# end
+function modify_dirichlet_bc(dh::DofHandler, ch::ConstraintHandler)
+    dbc0_vec = ch.dbcs
+    dbc = ConstraintHandler(dh)
+    for dbc0 in dbc0_vec
+        add!(dbc, Dirichlet(dbc0.field_name, dbc0.faces, dbc0.f, dbc0.components))
+    end
+    close!(dbc)
+    t = 0.0
+    update!(dbc, t)
+    return dbc
+end
 
 function setup_model(grid::Grid, variables::PrimitiveVariables{NV},
                      quad_order::Int, quad_type::Symbol,
-                     bc_dicts::BoundaryConditions, body_forces::BodyForces, initial_state, rheology::Rheology{T,TD,TV,TE,TP}) where {NV,T,TD}
+                     bc_dicts::BoundaryConditions, body_forces::BodyForces, initial_state, rheology::Rheology{T,TD,TV,TE,TP}) where {NV,T,TD,TV,TE,TP}
 
     # load packages
-    if (NV == 2) & (TD <:Damage)
-        @info("loading NLsolve package")
-        @eval(Rheologies, import NLsolve))
-    end
+    # if (NV == 2) & (TD <:Damage)
+    #     @info("loading NLsolve package")
+    #     @eval(Rheologies, import NLsolve)
+    #     @info("loading LineSearches package")
+    #     @eval(Rheologies, import LineSearches)
+    # end
 
     # get elements geometry
     el_geom = getcelltype(grid)
@@ -190,16 +174,37 @@ function create_body_forces_field(grid::Grid{dim}, body_forces::BodyForces{T}) w
     return bf
 end
 
+function convert_to_undamaged_material_properties(grid,mp0)
+    r0 = mp0[1]
+    TT,_,TV,TE,TP = gettypeparameters(r0)
+    mp = Rheology{TT,Nothing,TV,TE,TP}[]
+    if TP <: Plasticity
+        @inbounds for cellid in 1:getncells(grid)
+            r0_cell = mp0[cellid]
+            r_cell = Rheology(nothing, r0_cell.viscosity, r0_cell.elasticity, r0_cell.plasticity)
+            push!(mp,r_cell)
+        end
+    elseif TP == Nothing # add a plasticity field to specialize into a method sharing the same state type as the damaged model
+        plas = DruckerPrager(μ = 0.6) #
+        @inbounds for cellid in 1:getncells(grid)
+            r0_cell = mp0[cellid]
+            r_cell = Rheology(nothing, r0_cell.viscosity, r0_cell.elasticity, plas)
+            push!(mp,r_cell)
+        end
+    end
+    return mp
+end
+
 ms_type(r::Rheology{T,Nothing,V,E,Nothing},vars::PrimitiveVariables{N}) where {T,V,E<:Elasticity,N} = BasicMaterialState()
 ms_type(r::Rheology{T,Nothing,V,E,P},vars::PrimitiveVariables{N}) where {T,V,E<:Elasticity, P<:Plasticity,N} = PlasticMaterialState()
 ms_type(r::Rheology{T,D,V,E,P},vars::PrimitiveVariables{1}) where {T,D<:Damage,V,E<:Elasticity,P} = DamagedPlasticMaterialState(r)
 ms_type(r::Rheology{T,D,V,E,P},vars::PrimitiveVariables{2}) where {T,D<:Damage,V,E<:Elasticity,P} = PlasticMaterialState()
 # convenience function :
-ms_type(mp::Vector) = ms_type(mp[1])
+ms_type(mp::Vector,vars) = ms_type(mp[1],vars)
 
 function create_material_states(mp,vars,grid::Grid,cv,::Nothing)
     nqp = getnquadpoints(cv)
-    return [[ms_type(mp) for _ in 1:nqp] for _ in 1:getncells(grid)]
+    return [[ms_type(mp,vars) for _ in 1:nqp] for _ in 1:getncells(grid)]
 end
 
 function create_material_states(mp,vars::PrimitiveVariables{N},grid::Grid,cv,initial_state::Dict) where {N}
@@ -337,8 +342,8 @@ function get_initial_solution_vector!(u,dh,initial_values::Dict)
     fields_dims = dh.field_dims
     fields_el_ndofs = nbasefuncs.*fields_dims
     fields_offsets = [0] #first field is not offset
-    for i in 2:length(fields_el_dofs) # following fields offsets are a cumulative sum of offsets
-        push!(fields_offsets,fields_offsets[i-1] + field_el_ndofs[i-1])
+    for i in 2:length(fields_el_ndofs) # following fields offsets are a cumulative sum of offsets
+        push!(fields_offsets,fields_offsets[i-1] + fields_el_ndofs[i-1])
     end
     # find valued variables dofs offsets and elements dofs number:
     vars_offsets = zeros(Int,length(vars))
@@ -378,22 +383,49 @@ Cell{2,6,3}  => "QuadraticTriangle",
 Cell{2,4,4}  => "Quadrilateral",
 Cell{2,9,4}  => "QuadraticQuadrilateral",
 
-"Quadrilateral"
-function get_dofs_coordinates(cell,ndofs,offset,cell_type::Cell{2,4,4})
-    if ndofs = 4 # linear interpolation of the field
-        return cell_coords
-    else
-        @error "no congruence between field and geometry"
-    end
-end
+# "Quadrilateral"
+# function get_dofs_coordinates(cell,ndofs,offset,cell_type::Cell{2,4,4})
+#     if ndofs == 4 # linear interpolation of the field
+#         return cell_coords
+#     else
+#         @error "no congruence between field and geometry"
+#     end
+# end
+#
+# "QuadraticQuadrilateral"
+# function get_dofs_coordinates(cell,ndofs,offset,cell_type::Cell{2,9,4})
+#     if ndofs == 9 # linear interpolation of the field
+#         return cell_coords
+#     elseif ndofs == 4
+#         return cell_coords
+#     else
+#         @error "no congruence between field and geometry"
+#     end
+# end
 
-"QuadraticQuadrilateral"
-function get_dofs_coordinates(cell,ndofs,offset,cell_type::Cell{2,9,4})
-    if ndofs = 9 # linear interpolation of the field
-        return cell_coords
-    elseif ndofs = 4
-        return cell_coords
-    else
-        @error "no congruence between field and geometry"
+"""
+    get_field_dofs(field::Symbol, model::Model)
+
+Returns a vector of the dofs associated with the primitive variable `field` associated with `model`.
+"""
+function get_field_dofs(field::Symbol, model)
+    dh = model.dofhandler
+    field_id = findfirst(J.getfieldnames(dh).==field) # field priority during assembly
+    fields_ncelldofs = getnbasefunctions.(model.cellvalues_tuple)
+    cell_ndofs = sum(fields_ncelldofs) # total number of dofs per cell
+    field_ncelldofs = fields_ncelldofs[field_id] # number of dofs per cell of the field
+    fields_offset_incell = Int[1] # cell dofs index at which the fields begins
+    for i in 2:J.nfields(dh)
+        push!(fields_offset_incell, fields_offset_incell[i-1] + fields_ncelldofs[i-1])
     end
+    push!(fields_offset_incell,cell_ndofs+1) # add a length(dofs) + 1 value to allow looping over all dofs
+
+    ncells = getncells(dh.grid)
+    all_cell_dofs = dh.cell_dofs
+    field_dofs = Int[]
+    for cell_id in 1:ncells
+        cell_dofs = all_cell_dofs[dh.cell_dofs_offset[cell_id] : dh.cell_dofs_offset[cell_id+1] - 1]
+        append!(field_dofs, cell_dofs[fields_offset_incell[field_id]:fields_offset_incell[field_id+1] - 1])
+    end
+    return unique(field_dofs)
 end

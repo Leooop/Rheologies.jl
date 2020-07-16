@@ -1,7 +1,3 @@
-#import KrylovMethods
-import IterativeSolvers
-using IncompleteLU
-import LinearMaps
 
 
 abstract type AbstractSolver end
@@ -12,12 +8,12 @@ abstract type AbstractDirectSolver <: AbstractLinearSolver end
 abstract type AbstractIterativeSolver <: AbstractLinearSolver end
 
 ##### PRECONDITIONERS #####
-abstract type AbstractPreconditioner end
-
-struct ILU <: AbstractPreconditioner
-	drop_tol::Float64
-end
-(p::ILU)(J) = ilu(J, τ = p.drop_tol)
+# abstract type AbstractPreconditioner end
+#
+# struct ILU <: AbstractPreconditioner
+# 	drop_tol::Float64
+# end
+# (p::ILU)(J) = ilu(J, τ = p.drop_tol)
 
 # Default backslash solver #
 struct BackslashSolver <: AbstractDirectSolver end # single core direct solver
@@ -29,7 +25,7 @@ struct MUMPS <: AbstractDirectSolver end  # TODO
 
 # GMRES from IterativeSolvers package
 
-@kwdef mutable struct GMRESIterativeSolvers{T, Tl, Tr} <: AbstractIterativeSolver
+@kwdef mutable struct GMRESIterativeSolver{T<:Real, Tl, Tr} <: AbstractIterativeSolver
 	"Tolerance for solver"
 	tol::T = 1e-4
 
@@ -55,7 +51,7 @@ struct MUMPS <: AbstractDirectSolver end  # TODO
 	Pr::Tr = IterativeSolvers.Identity()
 end
 
-function (l::GMRESIterativeSolvers{T, Tl, Tr})(J, rhs, model) where {T, Tl, Tr}
+function (l::GMRESIterativeSolver{T, Tl, Tr})(J, rhs, model) where {T, Tl, Tr}
 	#J_map = v -> apply(J, v)
 	#dim = ndofs(model.dofhandler)
 	#Jmap = LinearMaps.LinearMap{T}(J_map, dim, dim ; ismutating = false)
@@ -90,3 +86,32 @@ end
     iter_on_nonassociated_plasticity::Bool = false
     linear_solver::T = BackslashSolver()
 end
+
+struct NLsolveNewton{LS,R1<:Real,R2<:Real} <: AbstractNonLinearSolver
+    xtol::R1
+	ftol::R2
+	iterations::Int
+	store_trace::Bool
+	show_trace::Bool
+	extended_trace::Bool
+	linesearch::LS
+
+	# Custom inner constructor used to import the relevant packages and perform some checks
+	function NLsolveNewton{LS,R1,R2}(xtol,ftol,iterations,store_trace,show_trace,extended_trace,linesearch) where {LS,R1<:Real,R2<:Real}
+		# load modules
+		@info("loading NLsolve package")
+        @eval(Rheologies, import NLsolve)
+		@info("loading LineSearches package")
+        @eval(Rheologies, import LineSearches)
+
+		# Some checks
+		@assert xtol >= 0
+		@assert ftol >= 0
+		return new{LS,R1,R2}(xtol,ftol,iterations,store_trace,show_trace,extended_trace,linesearch)
+	end
+end
+
+# general outer constructor without type parameters
+NLsolveNewton(xtol::R1,ftol::R2,iterations,store_trace,show_trace,extended_trace,linesearch::LS) where {LS,R1<:Real,R2<:Real} = NLsolveNewton{LS,R1,R2}(xtol,ftol,iterations,store_trace,show_trace,extended_trace,linesearch)
+# kwargs method
+NLsolveNewton(;xtol = 0.0,ftol = 1e-8,iterations = 1000,store_trace = false,show_trace = false,extended_trace = false,linesearch = LineSearches.Static) = NLsolveNewton(xtol,ftol,iterations,store_trace,show_trace,extended_trace,linesearch)
