@@ -235,8 +235,8 @@ function assemble_cell_elast!(re, Ke, model::Model{DIM,2,TD,V,E,P}, cell, cvu, c
 
         for i in 1:nD
             #re[BlockIndex(D▄, i)] += ((D - D_prev)/model.clock.Δt - dDdt) * dΩ
-            re[i+nu] += eps(Float64) * dΩ
-            Ke[BlockIndex((D▄, D▄), (i, i))] = -1e20 # zero_diagonal to prevent update of D
+            re[i+nu] += 1e-9 * dΩ
+            Ke[BlockIndex((D▄, D▄), (i, i))] = -1e9 # zero_diagonal to prevent update of D
         end
     end
     symmetrize_lower!(Ke) #when j in 1:i

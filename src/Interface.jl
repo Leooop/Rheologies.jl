@@ -309,10 +309,10 @@ end
 
 gettypeparameters(::Rheology{T,D,V,E,P}) where {T,D,V,E,P} = (T,D,V,E,P)
 
-function get_initial_solution_vector!(u,dh,initial_values::Vector)
+function set_initial_solution_vector!(u,dh,initial_values::Vector)
     u .= initial_values
 end
-function get_initial_solution_vector!(u,dh,initial_values::Dict)
+function set_initial_solution_vector!(u,dh,initial_values::Dict)
     vars = keys(initial_values)
     field_names = dh.field_names
 

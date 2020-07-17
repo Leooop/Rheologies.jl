@@ -56,11 +56,18 @@ function iterate(model::Model{2,2,D,V,E,P}, output_writer, initial_values = noth
     n_dofs = ndofs(dh)  # total number of dofs
     u  = zeros(n_dofs)
     if initial_values != nothing
-        get_initial_solution_vector!(u,dh,initial_values)
+        set_initial_solution_vector!(u,dh,initial_values)
     end
     u_converged = copy(u) # backup solution vector
     δu = similar(u)
 
+    ###### TEST
+    dofs_D = get_field_dofs(:D,model)
+    println("D initial extrema = ", extrema(u[dofs_D]))
+    vtk_grid("TEST_u-D_initial_fields", model.dofhandler) do vtkfile
+        vtk_point_data(vtkfile, model.dofhandler, u)
+    end
+    ######
     # Tuple of the number of shape functions per element and per field
     nbasefuncs = getnbasefunctions.(model.cellvalues_tuple)
 

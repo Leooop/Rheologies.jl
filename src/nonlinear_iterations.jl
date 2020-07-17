@@ -90,7 +90,7 @@ function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{D
                 println("δD elast extrema = ", extrema(δu[dofs_D]))
                 ################
             else
-
+                dofs_D = get_field_dofs(:D,model)
                 ### Compute Jacobian using finite difference ###
                 f!(res,u) = doassemble_res!(res, model, nbasefuncs, u, u_prev)
                 #f_trailing_args!(res,u,model,nbasefuncs,u_prev) = doassemble_res!(res, model, nbasefuncs, u, u_prev)
@@ -99,6 +99,8 @@ function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{D
                 @time J = compute_jacobian(f!,u,1e-6)
                 println("hand made Jacobian L2-norm conditioning = ", cond(Array(J)))
 
+                uu_jac =
+                DD_jac = 
                 # print(" FiniteDiff Jac time : ")
                 # @time begin
                 #     # @eval using FiniteDifferences #, FiniteDiff, SparsityDetection, SparseDiffTools
@@ -131,14 +133,13 @@ function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{D
                 # P = DiagonalPreconditioner(J) # similar to the following
                 P = Diagonal(J)
                 invP = inv(P)
-                println("FiniteDiff preconditioned Jacobian L2-norm conditioning = ", cond(Array(invP*J)))
+                println("Preconditioned Jacobian L2-norm conditioning = ", cond(Array(invP*J)))
                 @timeit "linear_solve" δu .= solver.linear_solver(invP*J,Array(-invP*res),model)
                 #@timeit "linear_solve" δu .= solver.linear_solver(J,-res,model)
 
                 ##### TEST #####
-                dofs_D = get_field_dofs(:D,model)
                 println("δD damaged extrema = ", extrema(δu[dofs_D]))
-                # TODO remove it after test
+                # TODO try to set negative δD to zero, remove it after test
                 # for i in dofs_D
                 #     if δu[i] < 0
                 #         δu[i] = 0.0

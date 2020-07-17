@@ -765,7 +765,6 @@ function compute_stress_tangent(ϵij,
 end
 
 function compute_jacobian(f!,u,eps=1e-9)
-
     Iv = Int[]
     Jv = Int[]
     Vv = Float64[]
