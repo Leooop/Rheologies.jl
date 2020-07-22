@@ -236,7 +236,7 @@ function compute_subcrit_damage_rate(r::Rheology, KI, D)
     Vr = Vs * (0.862 + 1.14e.ν)/(1 + e.ν)
 
     dDdl = compute_dDdl(r,D) # damage derivative wrt crack length
-    dldt = min(d.l̇₀*(KI/d.K₁c)^(d.n),Vr)  # cracks growth rate  speed
+    dldt = min(d.l̇₀*(KI/d.K₁c)^(d.n),Vr)  # cracks growth rate
     @assert dDdl * dldt >= 0
     return dDdl * dldt
 end
@@ -268,6 +268,7 @@ function get_damage_constrained_Δt(model,u,ΔD_max)
     nu,nD = getnbasefunctions.(model.cellvalues_tuple)
     nqp = getnquadpoints(model.cellvalues_tuple[2])
     Δt_max = 1e9
+    dDdt_max = 0.0
     for cell in CellIterator(model.dofhandler)
         cellid = cell.current_cellid.x
         states = model.material_state[cellid]
@@ -282,8 +283,10 @@ function get_damage_constrained_Δt(model,u,ΔD_max)
             KI = compute_KI(r,state.σ,D)
             dDdt = compute_subcrit_damage_rate(r, KI, D)
             Δt_max = min(ΔD_max/dDdt,Δt_max)
+            dDdt_max = max(dDdt,dDdt_max)
         end
     end
+    println("dDdt_max based on converged σ and D = ",dDdt_max)
     return Δt_max
 end
 

@@ -16,6 +16,7 @@ module Rheologies
     using StaticArrays
     using StructArrays
     using LinearAlgebra
+    using ForwardDiff
     #using LoopVectorization
 
     #import KrylovMethods

@@ -104,9 +104,9 @@ end
 # end
 function doassemble_elast!(res, K, model::Model{dim,2,TD,TV,TE,TP}, nbasefuncs, nodal_vars, nodal_vars_prev) where {dim,TD,TV,TE,TP}
 
-    # Initialize res vector
-    res,K = model.RHS, model.K
-    assembler = start_assemble(model.K, model.RHS)
+    # Initialize res vector and K matrix
+    #assembler = start_assemble(model.K, model.RHS)
+    assembler = start_assemble(K, res)
 
     # initialize local residual vector
     n1 = nbasefuncs[1]
@@ -127,13 +127,48 @@ function doassemble_elast!(res, K, model::Model{dim,2,TD,TV,TE,TP}, nbasefuncs, 
     @inbounds for cell in CellIterator(dh)
         eldofs = celldofs(cell)
         ue = nodal_vars[eldofs[1:n1]]
-        De = nodal_vars[eldofs[n1+1:end]]
-        De_prev = nodal_vars_prev[eldofs[n1+1:end]]
+        De = exp.(nodal_vars[eldofs[n1+1:end]])
+        De_prev = exp.(nodal_vars_prev[eldofs[n1+1:end]])
 
         fill!(re, 0)
         fill!(Ke, 0)
         # assemble_up dispatch on rheology type parameters
         @timeit "assemble cell" assemble_cell_elast!(re, Ke, model, cell, cvu, cvD, n1, n2, u▄, D▄, ue, De, De_prev)
+
+        # increment global residual with local ones
+        assemble!(assembler, eldofs, re, Ke)
+    end
+end
+
+function doassemble_AD!(res, K, model::Model{dim,2,TD,TV,TE,TP}, nbasefuncs, nodal_vars, nodal_vars_prev) where {dim,TD,TV,TE,TP}
+
+    assembler = start_assemble(K, res)
+
+    # initialize local residual vector
+    n1 = nbasefuncs[1]
+    n2 = nbasefuncs[2]
+    re = PseudoBlockArray(zeros(n1 + n2), [n1, n2]) # local force vector
+    Ke = PseudoBlockArray(zeros(n1 + n2, n1 + n2), [n1, n2], [n1, n2]) # local stiffness matrix
+
+    # TODO preallocate element nodal variables ue, De ...
+
+    # unpack things from model
+    dh = model.dofhandler
+    cvu, cvD, fvu  = model.cellvalues_tuple[1], model.cellvalues_tuple[2], model.facevalues
+    mp = model.material_properties
+
+    # blocks names
+    u▄, D▄ = 1, 2
+
+    @inbounds for cell in CellIterator(dh)
+        fill!(re, zero(eltype(re)))
+        fill!(Ke, zero(eltype(re)))
+
+        eldofs = celldofs(cell)
+        nodal_vars_el = nodal_vars[eldofs]
+        nodal_vars_el_prev = nodal_vars_prev[eldofs]
+        # assemble_up dispatch on rheology type parameters
+        @timeit "assemble cell AD" assemble_cell_AD!(re, Ke, model, cell, cvu, cvD, n1, n2, u▄, D▄, nodal_vars_el, nodal_vars_el_prev)
 
         # increment global residual with local ones
         assemble!(assembler, eldofs, re, Ke)
@@ -162,13 +197,10 @@ function doassemble_res!(res, model::Model{dim,2,TD,TV,TE,TP}, nbasefuncs, nodal
 
     @inbounds for cell in CellIterator(dh)
         eldofs = celldofs(cell)
-        ue = nodal_vars[eldofs[1:n1]]
-        De = nodal_vars[eldofs[n1+1:end]]
-        De_prev = nodal_vars_prev[eldofs[n1+1:end]]
-
-        fill!(re, 0)
+        nodal_vars_el = nodal_vars[eldofs]
+        nodal_vars_el_prev = nodal_vars_prev[eldofs]
         # assemble_up dispatch on rheology type parameters
-        @timeit "assemble cell" assemble_res_cell!(re, model, cell, cvu, cvD, n1, n2, u▄, D▄, ue, De, De_prev)
+        @timeit "assemble cell" assemble_res_cell!(re, model, cell, cvu, cvD, n1, n2, u▄, D▄, nodal_vars_el, nodal_vars_el_prev)
 
         # increment global residual with local ones
         assemble!(res, eldofs, re)

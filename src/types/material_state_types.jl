@@ -4,7 +4,7 @@
 The states of the whole material are then stored in a `Vector{Vector{<:MaterialState}} (`MaterialState`s contained in a cell, and the cell in a grid).
 Stores stress and strain informations as tensorial quantities.
 """
-abstract type MaterialState{S <: SecondOrderTensor} end
+abstract type MaterialState{S <: Real} end
 
 
 function update_material_state!(model)
@@ -35,14 +35,14 @@ end
 temp_ϵ : temporary strain tensor
 temp_σ : temporary stress tensor
 """
-mutable struct BasicMaterialState{S} <: MaterialState{S}
+mutable struct BasicMaterialState{T} <: MaterialState{T}
     # Store converged values
-    ϵ::S # total strain
-    σ::S # stress
+    ϵ::SymmetricTensor{2, 3, T} # total strain
+    σ::SymmetricTensor{2, 3, T} # stress
 
     # Store temporary values used during equilibrium iterations
-    temp_ϵ::S
-    temp_σ::S
+    temp_ϵ::SymmetricTensor{2, 3, T}
+    temp_σ::SymmetricTensor{2, 3, T}
 end
 
 function BasicMaterialState()
@@ -73,18 +73,29 @@ temp_ϵ̅ᵖ : temporary accumulated plastic strain
 temp_ϵ : temporary strain tensor
 temp_σ : temporary stress tensor
 """
-mutable struct PlasticMaterialState{S} <: MaterialState{S}
+mutable struct PlasticMaterialState{T} <: MaterialState{T}
     # Store converged values
-    ϵᵖ::S # plastic strain
-    ϵ̅ᵖ::Float64 # accumulated plastic strain
-    ϵ::S # total strain
-    σ::S # stress
+    ϵᵖ::SymmetricTensor{2, 3, T} # plastic strain
+    ϵ̅ᵖ::T # accumulated plastic strain
+    ϵ::SymmetricTensor{2, 3, T} # total strain
+    σ::SymmetricTensor{2, 3, T} # stress
 
     # Store temporary values used during equilibrium iterations
-    temp_ϵᵖ::S
-    temp_ϵ̅ᵖ::Float64
-    temp_ϵ::S
-    temp_σ::S
+    temp_ϵᵖ::SymmetricTensor{2, 3, T}
+    temp_ϵ̅ᵖ::T
+    temp_ϵ::SymmetricTensor{2, 3, T}
+    temp_σ::SymmetricTensor{2, 3, T}
+end
+function PlasticMaterialState{T}() where {T<:Real}
+    return PlasticMaterialState(
+                zero(SymmetricTensor{2, 3, T}),
+                zero(T),
+                zero(SymmetricTensor{2, 3, T}),
+                zero(SymmetricTensor{2, 3, T}),
+                zero(SymmetricTensor{2, 3, T}),
+                zero(T),
+                zero(SymmetricTensor{2, 3, T}),
+                zero(SymmetricTensor{2, 3, T}))
 end
 function PlasticMaterialState()
     return PlasticMaterialState(
@@ -103,6 +114,12 @@ function update_state!(state::PlasticMaterialState)
     state.ϵ̅ᵖ = state.temp_ϵ̅ᵖ
     state.ϵ = state.temp_ϵ
     state.σ = state.temp_σ
+end
+function add_state!(stateout::PlasticMaterialState,statein::PlasticMaterialState)
+    stateout.ϵᵖ += statein.ϵᵖ
+    stateout.ϵ̅ᵖ += statein.ϵ̅ᵖ
+    stateout.ϵ += statein.ϵ
+    stateout.σ += statein.σ
 end
 
 function set_temp_state!(r::Rheology{TT,TD,Nothing,TE,TP},clock,state,σ,ϵ) where {TT,TD,TE,TP}
@@ -135,34 +152,34 @@ temp_ϵ̅ᵖ : temporary accumulated plastic strain
 temp_ϵ  : temporary strain tensor
 temp_σ  : temporary stress tensor
 """
-mutable struct DamagedPlasticMaterialState{S} <: MaterialState{S}
+mutable struct DamagedPlasticMaterialState{T} <: MaterialState{T}
     # Store converged values
-    D::Float64
-    ϵᵖ::S # plastic strain
-    ϵ̅ᵖ::Float64 # cumulated plastic strain
-    ϵ::S # total strain
-    σ::S # stress
+    D::T
+    ϵᵖ::SymmetricTensor{2, 3, T} # plastic strain
+    ϵ̅ᵖ::T # cumulated plastic strain
+    ϵ::SymmetricTensor{2, 3, T} # total strain
+    σ::SymmetricTensor{2, 3, T} # stress
 
     # Store temporary values used during equilibrium iterations
-    temp_D::Float64
-    temp_ϵᵖ::S
-    temp_ϵ̅ᵖ::Float64
-    temp_ϵ::S
-    temp_σ::S
+    temp_D::T
+    temp_ϵᵖ::SymmetricTensor{2, 3, T}
+    temp_ϵ̅ᵖ::T
+    temp_ϵ::SymmetricTensor{2, 3, T}
+    temp_σ::SymmetricTensor{2, 3, T}
 end
 
-function DamagedPlasticMaterialState(r::Rheology)
+function DamagedPlasticMaterialState{T}(r::Rheology) where {T<:Real}
     return DamagedPlasticMaterialState(
                 r.damage.D₀,
-                zero(SymmetricTensor{2, 3}),
-                0.0,
-                zero(SymmetricTensor{2, 3}),
-                zero(SymmetricTensor{2, 3}),
+                zero(SymmetricTensor{2, 3, T}),
+                zero(T),
+                zero(SymmetricTensor{2, 3, T}),
+                zero(SymmetricTensor{2, 3, T}),
                 r.damage.D₀,
-                zero(SymmetricTensor{2, 3}),
-                0.0,
-                zero(SymmetricTensor{2, 3}),
-                zero(SymmetricTensor{2, 3}))
+                zero(SymmetricTensor{2, 3, T}),
+                zero(T),
+                zero(SymmetricTensor{2, 3, T}),
+                zero(SymmetricTensor{2, 3, T}))
 end
 
 

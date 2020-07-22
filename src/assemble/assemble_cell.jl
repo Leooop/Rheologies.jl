@@ -85,7 +85,7 @@ end
 # Base.getindex(barray::PseudoBlockArray{Float64,1,Array{Float64,1},Tuple{BlockedUnitRange{Array{Int64,1}}}}, blockindex::BlockIndex{1}) =
 # getindex(barray::PseudoBlockArray{T,N,R,BS} where BS<:Tuple{Vararg{AbstractUnitRange{Int64},N}} where R<:AbstractArray{T,N}, blockindex::BlockIndex{N}) where {T, N}
 
-function assemble_res_cell!(re, model::Model{dim,2,TD,Nothing,TE,TP}, cell, cvu, cvD, nu, nD, u▄, D▄, ue, De, De_prev) where {dim,TD,TE,TP}
+function assemble_res_cell!(re, model::Model{dim,2,TD,Nothing,TE,TP}, cell, cvu, cvD, nu, nD, u▄, D▄, nodal_vars_el, nodal_vars_el_prev) where {dim,TD,TE,TP}
 
     reinit!(cvu, cell)
     reinit!(cvD, cell)
@@ -94,11 +94,22 @@ function assemble_res_cell!(re, model::Model{dim,2,TD,Nothing,TE,TP}, cell, cvu,
     r = model.material_properties[cell_id]
     bodyforces = model.body_forces[cell_id].components
 
+
+    ue = nodal_vars_el[1:nu]
+    De = exp.(nodal_vars_el[nu+1:end])
+    De_prev = exp.(nodal_vars_el_prev[nu+1:end])
+
+    fill!(re, 0)
     # We only assemble lower half triangle of the stiffness matrix and then symmetrize it.
     @inbounds for q_point in 1:getnquadpoints(cvu)
 
         # get qp state
+        # sol_type = eltype(nodal_vars)
+        # if sol_type <: ForwardDiff.Dual
+        #     state_dual = PlasticMaterialState{sol_type}()
+        # else
         state = model.material_state[cell_id][q_point]
+        # end
 
         # get Gauss differential term
         dΩ = getdetJdV(cvu, q_point)
@@ -130,7 +141,7 @@ function assemble_res_cell!(re, model::Model{dim,2,TD,Nothing,TE,TP}, cell, cvu,
             ####
 
             # get damage growth rate
-            KI = compute_KI(r.damage,state.σ,D_prev)
+            KI = compute_KI(r,σ,D)
 
             ###### TEST
             if isnan(KI)
@@ -161,11 +172,23 @@ function assemble_res_cell!(re, model::Model{dim,2,TD,Nothing,TE,TP}, cell, cvu,
             end
 
             # update qp state
-            set_temp_state!(r,model.clock,state,σ,ϵ)
+            sol_type = eltype(nodal_vars_el)
+            if !(sol_type <: ForwardDiff.Dual)
+                set_temp_state!(r,model.clock,state,σ,ϵ)
+            end
 
         else # loss of cohesion, drucker-Prager rheology
             rp = Rheology(nothing,nothing,r.elasticity,r.plasticity)
-            σ, _ = compute_stress_tangent(ϵ, rp, state, model.clock, noplast = false)
+
+            sol_type = eltype(nodal_vars_el)
+            if sol_type <: ForwardDiff.Dual
+                state_dual = PlasticMaterialState{sol_type}()
+                add_state!(state_dual,state)
+                σ, _ = compute_stress_tangent(ϵ, rp, state_dual, model.clock, noplast = false)
+            else
+                σ, _ = compute_stress_tangent(ϵ, rp, state, model.clock, noplast = false)
+            end
+
             dDdt = 0.0
             for i in 1:nu
                 #
@@ -193,6 +216,15 @@ function assemble_res_cell!(re, model::Model{dim,2,TD,Nothing,TE,TP}, cell, cvu,
 
 end
 
+# TODO : put config out of cell loop, use DiffResults to get func eval + jacobian in a single pass.
+function assemble_cell_AD!(re, Ke, model::Model{dim,2,TD,Nothing,TE,TP}, cell, cvu, cvD, nu, nD, u▄, D▄, nodal_vars_el, nodal_vars_el_prev) where {dim,TD,TE,TP}
+    assemble_res_cell!(re, model, cell, cvu, cvD, nu, nD, u▄, D▄, nodal_vars_el, nodal_vars_el_prev)
+    f!(re,nodal_vars_el) = assemble_res_cell!(re, model, cell, cvu, cvD, nu, nD, u▄, D▄, nodal_vars_el, nodal_vars_el_prev)
+    re2 = similar(re)
+    jacobian_config = ForwardDiff.JacobianConfig(f!, re2, nodal_vars_el)#, chunk = Chunk(nodal_vars))
+    ForwardDiff.jacobian!(Ke, f!, re2, nodal_vars_el, jacobian_config, Val{true}())
+end
+
 function assemble_cell_elast!(re, Ke, model::Model{DIM,2,TD,V,E,P}, cell, cvu, cvD, nu, nD, u▄, D▄, ue, De, De_prev) where {DIM,TD,V,E,P}
 
     reinit!(cvu, cell)
@@ -215,7 +247,6 @@ function assemble_cell_elast!(re, Ke, model::Model{DIM,2,TD,V,E,P}, cell, cvu, c
         ϵ2D = function_symmetric_gradient(cvu, q_point, ue)
         ϵ = SymmetricTensor{2,3}((i,j)->get_3D_func(i,j,ϵ2D))
         σ, C = compute_stress_tangent(ϵ, r, state, model.clock, noplast = true)
-        D_prev = function_value(cvD, q_point, De_prev)
 
         for i in 1:nu
             #
@@ -235,8 +266,8 @@ function assemble_cell_elast!(re, Ke, model::Model{DIM,2,TD,V,E,P}, cell, cvu, c
 
         for i in 1:nD
             #re[BlockIndex(D▄, i)] += ((D - D_prev)/model.clock.Δt - dDdt) * dΩ
-            re[i+nu] += 1e-9 * dΩ
-            Ke[BlockIndex((D▄, D▄), (i, i))] = -1e9 # zero_diagonal to prevent update of D
+            re[i+nu] = 1e3 #* dΩ
+            Ke[BlockIndex((D▄, D▄), (i, i))] = 1.0 #* dΩ
         end
     end
     symmetrize_lower!(Ke) #when j in 1:i

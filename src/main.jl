@@ -53,19 +53,26 @@ function iterate(model::Model{2,2,D,V,E,P}, output_writer, initial_values = noth
     dh, dbc, cv, clock = model.dofhandler, model.dirichlet_bc, model.cellvalues_tuple, model.clock
 
     # Pre-allocate solution vectors, etc.
+    dofs_D = get_field_dofs(:D,model)
     n_dofs = ndofs(dh)  # total number of dofs
     u  = zeros(n_dofs)
-    if initial_values != nothing
+    if initial_values == nothing
+        u[dofs_D] .= log.(u[dofs_D].+1e-9) # ensure non zero starting Damage
+    else
         set_initial_solution_vector!(u,dh,initial_values)
+        u[dofs_D] .= log.(u[dofs_D])
     end
+
     u_converged = copy(u) # backup solution vector
+    u_exp = similar(u)
     δu = similar(u)
 
     ###### TEST
-    dofs_D = get_field_dofs(:D,model)
-    println("D initial extrema = ", extrema(u[dofs_D]))
-    vtk_grid("TEST_u-D_initial_fields", model.dofhandler) do vtkfile
-        vtk_point_data(vtkfile, model.dofhandler, u)
+    println("D initial extrema = ", extrema(exp.(u[dofs_D])))
+    vtk_grid("TEST_u-logD_initial_fields", model.dofhandler) do vtkfile
+        u2 = copy(u)
+        u2[dofs_D] .= exp.(u2[dofs_D]) # coming back to damage from log(damage)
+        vtk_point_data(vtkfile, model.dofhandler, u2)
     end
     ######
     # Tuple of the number of shape functions per element and per field
@@ -75,7 +82,9 @@ function iterate(model::Model{2,2,D,V,E,P}, output_writer, initial_values = noth
     while clock.current_time <= clock.tspan[2]
         @timeit "time iteration" begin
 
-            Δt_max_damage = get_damage_constrained_Δt(model,u,0.3)
+            u_exp .= u
+            u_exp[dofs_D] .= exp.(u_exp[dofs_D])
+            Δt_max_damage = get_damage_constrained_Δt(model,u_exp,0.3)
             println("Δt_max_damage = ",Δt_max_damage)
             timestep!(clock,Δt_max_damage) # update clock
 

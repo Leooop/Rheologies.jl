@@ -1,4 +1,4 @@
-nonlinear_solve!(u, u_prev, δu, model::Model{dim,2,D,V,E,P,S}, restart_flag) where {dim,D,V,E,P,S<:AbstractLinearSolver} = @error "Please choose a non linear solver"
+nonlinear_solve!(u, u_prev, δu, model::Model{DIM,2,D,V,E,P,S}, restart_flag) where {DIM,D,V,E,P,S<:AbstractLinearSolver} = @error "Please choose a non linear solver"
 
 function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{DIM,2,TD,TV,TE,TP,TS}, restart_flag) where {DIM,TD,TV,TE,TP,TS<:AbstractNonLinearSolver}
 
@@ -9,7 +9,13 @@ function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{D
 
     # number of base functions per element
     nbasefuncs = getnbasefunctions.(model.cellvalues_tuple)
+    dofs_D = get_field_dofs(:D,model)
+    dofs_disp = [i for i in eachindex(u) if i ∉ dofs_D]
 
+    #### TEST ####
+    dofs_disp2 = get_field_dofs(:u,model)
+    @assert (all(dofs_disp .== dofs_disp2))
+    ##############
 
     # flags for restarting nonlinear iterations
     divergence_flag = false # flag when diverging residual norm
@@ -31,10 +37,11 @@ function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{D
             if newton_itr == 0
                 tt = @elapsed doassemble_elast!(res, K, model, nbasefuncs, u, u_prev)
             else
-                tt = @elapsed doassemble_res!(res, model, nbasefuncs, u, u_prev)
+                tt = @elapsed doassemble_AD!(res, K, model, nbasefuncs, u, u_prev)
+                println("AD Jacobian L2-norm conditioning = ", cond(Array(K)))
             end
             println("assemble time : ", tt)
-            # compute residual norm
+            # compute residual norm TODO maybe compute norm on exp(log(D))
             norm_res = norm(res[JuAFEM.free_dofs(dbc)])
 
             # print current Newton iteration
@@ -43,11 +50,11 @@ function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{D
             #### Max D TEST :
             if model.material_properties[1].damage isa Damage
                 dofs_D = get_field_dofs(:D,model)
-                D = u[dofs_D]
-                D_prev = u_prev[dofs_D]
-                max_ΔD = maximum(D.-D_prev)
-                @assert all(D.-D_prev .>= 0)
-                print("\t max ΔD = ", max_ΔD, "\n")
+                logD = u[dofs_D]
+                logD_prev = u_prev[dofs_D]
+                max_δD = maximum(exp.(logD).-exp.(logD_prev))
+                @assert all(logD.-logD_prev .>= 0)
+                print("\t max ΔD = ", max_δD, "\n")
             end
             ####
 
@@ -86,59 +93,71 @@ function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{D
                 @timeit "linear_solve" δu .= solver.linear_solver(K,-res,model)
 
                 ##### TEST #####
-                dofs_D = get_field_dofs(:D,model)
-                println("δD elast extrema = ", extrema(δu[dofs_D]))
+                println("δD elast extrema = ", extrema(exp.(δu[dofs_D])))
                 ################
             else
-                dofs_D = get_field_dofs(:D,model)
-                ### Compute Jacobian using finite difference ###
-                f!(res,u) = doassemble_res!(res, model, nbasefuncs, u, u_prev)
-                #f_trailing_args!(res,u,model,nbasefuncs,u_prev) = doassemble_res!(res, model, nbasefuncs, u, u_prev)
-                f(u) = (res = similar(u) ; doassemble_res!(res, model, nbasefuncs, u, u_prev) ; return res)
-                print(" hand made Jac time : ")
-                @time J = compute_jacobian(f!,u,1e-6)
-                println("hand made Jacobian L2-norm conditioning = ", cond(Array(J)))
 
-                uu_jac =
-                DD_jac = 
-                # print(" FiniteDiff Jac time : ")
-                # @time begin
-                #     # @eval using FiniteDifferences #, FiniteDiff, SparsityDetection, SparseDiffTools
-                #     # input = rand(length(u))
-                #     # output = similar(input)
-                #     # sparsity_pattern = jacobian_sparsity(f!,output,input)
-                #     # sparsejac = Float64.(sparse(sparsity_pattern))
-                #     # colors = matrix_colors(sparsejac)
-                #     # J2 = FiniteDiff.JacobianCache(u,colorvec=colors,sparsity=sparsejac)
-                #     # J2 = FiniteDiff.finite_difference_jacobian(f,u)
-                #     # fdm = FiniteDifferences.central_fdm(2,1)
-                #     # J2 = FiniteDifferences.jacobian(fdm, f, u)[1]
+                ### test Δt wrt elastic stress solution
+                if newton_itr == 1
+                    u_exp = copy(u)
+                    u_exp[dofs_D] .= exp.(u_exp[dofs_D])
+                    Δt_max_damage = get_damage_constrained_Δt(model,u_exp,0.3)
+                    println("Δt max damage with elastic stress = ",Δt_max_damage)
+                end
+
+                # ################################################
+                # ### Compute Jacobian using finite difference ###
+                # ################################################
+                # f!(res,u) = doassemble_res!(res, model, nbasefuncs, u, u_prev)
+                # #f_trailing_args!(res,u,model,nbasefuncs,u_prev) = doassemble_res!(res, model, nbasefuncs, u, u_prev)
+                # f(u) = (res = similar(u) ; doassemble_res!(res, model, nbasefuncs, u, u_prev) ; return res)
+                # print(" hand made Jac time : ")
+                # @time J = compute_jacobian(f!, u ; eps = 1e-6)
+                # # dofs_tuple = (dofs_disp, dofs_D),
+                # println("hand made Jacobian L2-norm conditioning = ", cond(Array(J)))
                 #
-                #     # println("FiniteDiff Jacobian L2-norm conditioning = ", cond(J2))
-                #     # println("max difference 2 jacs = ", maximum(abs.(J.-J2)))
-                #     # J = sparse(J2)
-                # end
+                # #uu_jac =
+                # #DD_jac =
+                # # print(" FiniteDiff Jac time : ")
+                # # @time begin
+                # #     # @eval using FiniteDifferences #, FiniteDiff, SparsityDetection, SparseDiffTools
+                # #     # input = rand(length(u))
+                # #     # output = similar(input)
+                # #     # sparsity_pattern = jacobian_sparsity(f!,output,input)
+                # #     # sparsejac = Float64.(sparse(sparsity_pattern))
+                # #     # colors = matrix_colors(sparsejac)
+                # #     # J2 = FiniteDiff.JacobianCache(u,colorvec=colors,sparsity=sparsejac)
+                # #     # J2 = FiniteDiff.finite_difference_jacobian(f,u)
+                # #     # fdm = FiniteDifferences.central_fdm(2,1)
+                # #     # J2 = FiniteDifferences.jacobian(fdm, f, u)[1]
+                # #
+                # #     # println("FiniteDiff Jacobian L2-norm conditioning = ", cond(J2))
+                # #     # println("max difference 2 jacs = ", maximum(abs.(J.-J2)))
+                # #     # J = sparse(J2)
+                # # end
+                #
+                #
+                # ### Apply zeros accordingly to dbcs ###
+                # @timeit "apply_dbc" apply_zero!(J, res, dbc) # TODO : maybe after preconditioning
+                #
+                # println("presence of nans : ", any(isnan.(J)))
+                # println("maximum((J'.-J)./J) : ", maximum([J[i,j].-J[j,i]./J[i,j] for i in length(res), j in length(res) if !isnan(J[i,j])]))
+                # println("positive definiteness of sym(J) : ", isposdef(Symmetric(J)))
+                # #@timeit "linear_solve" δu .= Symmetric(K) \ -res
+                #
+                # ## Preconditioning :
+                # # using Preconditioners
+                # # P = DiagonalPreconditioner(J) # similar to the following
+                # P = Diagonal(J)
+                # invP = inv(P)
+                # println("Preconditioned Jacobian L2-norm conditioning = ", cond(Array(invP*J)))
+                #@timeit "linear_solve" δu .= solver.linear_solver(invP*J,Array(-invP*res),model)
 
-
-                ### Apply zeros accordingly to dbcs ###
-                @timeit "apply_dbc" apply_zero!(J, res, dbc)
-
-                println("presence of nans : ", any(isnan.(J)))
-                println("maximum((J'.-J)./J) : ", maximum([J[i,j].-J[j,i]./J[i,j] for i in length(res), j in length(res) if !isnan(J[i,j])]))
-                println("positive definiteness of sym(J) : ", isposdef(Symmetric(J)))
-                #@timeit "linear_solve" δu .= Symmetric(K) \ -res
-
-                ## Preconditioning :
-                # using Preconditioners
-                # P = DiagonalPreconditioner(J) # similar to the following
-                P = Diagonal(J)
-                invP = inv(P)
-                println("Preconditioned Jacobian L2-norm conditioning = ", cond(Array(invP*J)))
-                @timeit "linear_solve" δu .= solver.linear_solver(invP*J,Array(-invP*res),model)
-                #@timeit "linear_solve" δu .= solver.linear_solver(J,-res,model)
+                @timeit "apply_dbc" apply_zero!(K, res, dbc)
+                @timeit "linear_solve" δu .= solver.linear_solver(K,-res,model)
 
                 ##### TEST #####
-                println("δD damaged extrema = ", extrema(δu[dofs_D]))
+                println("δD damaged extrema = ", extrema(exp.(δu[dofs_D])))
                 # TODO try to set negative δD to zero, remove it after test
                 # for i in dofs_D
                 #     if δu[i] < 0
@@ -153,9 +172,17 @@ function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{D
             #     Pl = Preconditioners.AMGPreconditioner(Symmetric(K))
             #     IterativeSolvers.cg!(δu, Symmetric(K), res, Pl = Pl, solver.linear_solver.kwargs...)
             # end
-            # displacement correction
-            u .+= δu
 
+            # displacement and damage corrections
+            D = exp.(u[dofs_D])
+            δD = exp.(δu[dofs_D])
+            disp = u[dofs_disp]
+            δdisp = δu[dofs_disp]
+
+            u[dofs_disp] .+= δdisp
+            u[dofs_D] .= log.(D .+ δD)
+
+            println("max δD newton_iter_$(newton_itr) : ", extrema(δD))
             # Make sure that the elastic solve didn't affect Damage
             # if newton_itr == 0
             #     dofs_D = get_field_dofs(:D,model)
@@ -164,7 +191,9 @@ function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{D
         end
         ###### TEST
         vtk_grid("TEST_u-D_iter$(newton_itr)", model.dofhandler) do vtkfile
-            vtk_point_data(vtkfile, model.dofhandler, u)
+            u2 = copy(u)
+            u2[dofs_D] .= exp.(u2[dofs_D]) # coming back to damage from log(damage)
+            vtk_point_data(vtkfile, model.dofhandler, u2)
         end
         ######
     end

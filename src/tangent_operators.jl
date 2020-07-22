@@ -764,20 +764,22 @@ function compute_stress_tangent(ϵij,
     end
 end
 
-function compute_jacobian(f!,u,eps=1e-9)
+function compute_jacobian(f!, u ; eps=1e-9)
     Iv = Int[]
     Jv = Int[]
     Vv = Float64[]
     len_u = length(u)
     δu = Vector{Float64}(undef,len_u)
+    half_δu = similar(δu)
     ∂f∂u_j = similar(δu)
     f_up = similar(δu)
     f_down = similar(δu)
     @inbounds for j in 1:len_u
         fill!(δu,0.0)
         δu[j] = eps
-        f!(f_up, u .+ (δu./2))
-        f!(f_down, u .- (δu./2))
+        half_δu .= δu./2
+        f!(f_up, u .+ half_δu)
+        f!(f_down, u .- half_δu)
         @. ∂f∂u_j = ( f_up - f_down ) /  δu[j]
         for i in 1:len_u
             if ∂f∂u_j[i] != 0.0
