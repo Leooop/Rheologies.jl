@@ -28,6 +28,7 @@ module Rheologies
     include("linear_solve.jl")
     include("nonlinear_iterations.jl")
     include("assemble/assemble_global.jl")
+    include("GmshParser.jl")
 
     # exports #
     # types
