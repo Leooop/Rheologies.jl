@@ -16,10 +16,21 @@ module Rheologies
     using StaticArrays
     using StructArrays
     using LinearAlgebra
+    using ForwardDiff
+    #using LoopVectorization
+
+    #import KrylovMethods
+    #import IterativeSolvers
+    #using IncompleteLU
+    #import LinearMaps
+    # Export
+    #import FileIO
+    #import MAT
+    #using UnicodePlots ## TEMPORARY
+    #using OrdinaryDiffEq
     #import MUMPSjInv
     #import Preconditioners
 
-    include("convenience_functions.jl")
     include("types/types.jl")
     include("physical_functions.jl")
     include("tangent_operators.jl")
@@ -29,6 +40,7 @@ module Rheologies
     include("nonlinear_iterations.jl")
     include("assemble/assemble_global.jl")
     include("GmshParser.jl")
+
 
     # exports #
     # types
@@ -41,7 +53,7 @@ module Rheologies
     export Elasticity
     export Plasticity, DruckerPrager, VonMises
     export Damage, BRSDamage
-    export VTKOutputWriter
+    export OutputWriter, VTKOutputWriter, JLD2OutputWriter, MATOutputWriter, MixedOutputWriter
 
     # functions
     export solve, setup_model, create_material_properties

@@ -71,9 +71,9 @@ function Base.show(io::IO, ::MIME"text/plain", rheology::Rheology{T,D,V,E,P}) wh
         println(io, "⌗  $(typeof(rheology)) instance with functional parameters ")
     end
     print(io, "    -> damage  : ")
-    show(io,rheology.damage); print(io,"\n")
+    show(io,MIME"text/plain"(),rheology.damage); print(io,"\n")
     print(io, "    -> viscosity  : ")
-    show(io,rheology.viscosity); print(io,"\n")
+    show(io,MIME"text/plain"(),rheology.viscosity); print(io,"\n")
     print(io, "    -> elasticity : ")
     show(io,MIME"text/plain"(),rheology.elasticity);
     print(io, "    -> plasticity : ")

@@ -2,6 +2,7 @@
 using Base: @kwdef
 import Base: show, getproperty
 
+include("convenience_functions.jl")
 # aliases
 Maybe(T)=Union{T,Nothing}
 const F64orFunc = Union{Float64,Function}
@@ -27,7 +28,7 @@ function PrimitiveVariables{NV}(names,ip_order,el_geom::Type{Cell{dim,N,M}}) whe
     NV == 1 && return PrimitiveVariables{NV}(names, (Lagrange{dim,refshape(el_geom),ip_order[1]}(),))
     NV == 2 && return PrimitiveVariables{NV}(names, (Lagrange{dim,refshape(el_geom),ip_order[1]}(),
                                           Lagrange{dim,refshape(el_geom),ip_order[2]}()) )
-    @error "More than two primitive variables (:u and :p) not implemented yet"
+    @error "More than two primitive variables (:u and :p or :D) not implemented yet"
 end
 
 # function Variables(names::Symbol,ips::Interpolation)

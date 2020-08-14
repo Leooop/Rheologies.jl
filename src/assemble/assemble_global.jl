@@ -69,7 +69,148 @@ function doassemble!(model::Model{dim,2,Nothing,Nothing,E,Nothing},nbasefuncs) w
     end
 end
 
-function doassemble!(model::Model{dim,1,Nothing,V,E,P},nbasefuncs, u ; noplast = false) where {dim,V,E,P}
+# function doassemble_res!(model::Model{dim,2,TD,TV,TE,TP}, nodal_vars, nodal_vars_prev) where {dim,TD,TV,TE,TP}
+#
+#     # Initialize res vector
+#     fill!(model.RHS, 0)
+#
+#     # initialize local residual vector
+#     n1, n2 = getnbasefunctions.(model.cellvalues_tuple)
+#     re = PseudoBlockArray(zeros(n1 + n2), [n1, n2]) # local force vector
+#
+#     # TODO preallocate element nodal variables ue, De ...
+#
+#     # unpack things from model
+#     dh = model.dofhandler
+#     cvu, cvD, fvu  = model.cellvalues_tuple[1], model.cellvalues_tuple[2], model.facevalues
+#     mp = model.material_properties
+#
+#     # blocks names
+#     u▄ = 1
+#     D▄ = 2
+#
+#     @inbounds for cell in CellIterator(dh)
+#         eldofs = celldofs(cell)
+#         ue = nodal_vars[eldofs[1:n1]]
+#         De = nodal_vars[eldofs[n1+1:end]]
+#         De_prev = nodal_vars_prev[eldofs[n1+1:end]]
+#
+#         fill!(re, 0)
+#         # assemble_up dispatch on rheology type parameters
+#         @timeit "assemble cell" assemble_cell!(re, model, cell, cvu, cvp, n1, n2, u▄, D▄, ue, De, De_prev)
+#         # increment global residual with local ones
+#         assemble!(model.RHS, eldofs, re)
+#     end
+# end
+function doassemble_elast!(res, K, model::Model{dim,2,TD,TV,TE,TP}, nbasefuncs, nodal_vars, nodal_vars_prev) where {dim,TD,TV,TE,TP}
+
+    # Initialize res vector and K matrix
+    #assembler = start_assemble(model.K, model.RHS)
+    assembler = start_assemble(K, res)
+
+    # initialize local residual vector
+    n1 = nbasefuncs[1]
+    n2 = nbasefuncs[2]
+    re = PseudoBlockArray(zeros(n1 + n2), [n1, n2]) # local force vector
+    Ke = PseudoBlockArray(zeros(n1 + n2, n1 + n2), [n1, n2], [n1, n2]) # local stiffness matrix
+
+    # TODO preallocate element nodal variables ue, De ...
+
+    # unpack things from model
+    dh = model.dofhandler
+    cvu, cvD, fvu  = model.cellvalues_tuple[1], model.cellvalues_tuple[2], model.facevalues
+    mp = model.material_properties
+
+    # blocks names
+    u▄, D▄ = 1, 2
+
+    @inbounds for cell in CellIterator(dh)
+        eldofs = celldofs(cell)
+        ue = nodal_vars[eldofs[1:n1]]
+        De = exp.(nodal_vars[eldofs[n1+1:end]])
+        De_prev = exp.(nodal_vars_prev[eldofs[n1+1:end]])
+
+        fill!(re, 0)
+        fill!(Ke, 0)
+        # assemble_up dispatch on rheology type parameters
+        @timeit "assemble cell" assemble_cell_elast!(re, Ke, model, cell, cvu, cvD, n1, n2, u▄, D▄, ue, De, De_prev)
+
+        # increment global residual with local ones
+        assemble!(assembler, eldofs, re, Ke)
+    end
+end
+
+function doassemble_AD!(res, K, model::Model{dim,2,TD,TV,TE,TP}, nbasefuncs, nodal_vars, nodal_vars_prev) where {dim,TD,TV,TE,TP}
+
+    assembler = start_assemble(K, res)
+
+    # initialize local residual vector
+    n1 = nbasefuncs[1]
+    n2 = nbasefuncs[2]
+    re = PseudoBlockArray(zeros(n1 + n2), [n1, n2]) # local force vector
+    Ke = PseudoBlockArray(zeros(n1 + n2, n1 + n2), [n1, n2], [n1, n2]) # local stiffness matrix
+
+    # TODO preallocate element nodal variables ue, De ...
+
+    # unpack things from model
+    dh = model.dofhandler
+    cvu, cvD, fvu  = model.cellvalues_tuple[1], model.cellvalues_tuple[2], model.facevalues
+    mp = model.material_properties
+
+    # blocks names
+    u▄, D▄ = 1, 2
+
+    @inbounds for cell in CellIterator(dh)
+        fill!(re, zero(eltype(re)))
+        fill!(Ke, zero(eltype(re)))
+
+        eldofs = celldofs(cell)
+        nodal_vars_el = nodal_vars[eldofs]
+        nodal_vars_el_prev = nodal_vars_prev[eldofs]
+        # assemble_up dispatch on rheology type parameters
+        @timeit "assemble cell AD" assemble_cell_AD!(re, Ke, model, cell, cvu, cvD, n1, n2, u▄, D▄, nodal_vars_el, nodal_vars_el_prev)
+
+        # increment global residual with local ones
+        assemble!(assembler, eldofs, re, Ke)
+    end
+end
+
+function doassemble_res!(res, model::Model{dim,2,TD,TV,TE,TP}, nbasefuncs, nodal_vars, nodal_vars_prev) where {dim,TD,TV,TE,TP}
+
+    # Initialize res vector
+    fill!(res, 0)
+
+    # initialize local residual vector
+    n1 = nbasefuncs[1]
+    n2 = nbasefuncs[2]
+    re = PseudoBlockArray(zeros(n1 + n2), [n1, n2]) # local force vector
+
+    # TODO preallocate element nodal variables ue, De ...
+
+    # unpack things from model
+    dh = model.dofhandler
+    cvu, cvD, fvu  = model.cellvalues_tuple[1], model.cellvalues_tuple[2], model.facevalues
+    mp = model.material_properties
+
+    # blocks names
+    u▄, D▄ = 1, 2
+
+    @inbounds for cell in CellIterator(dh)
+        eldofs = celldofs(cell)
+        nodal_vars_el = nodal_vars[eldofs]
+        nodal_vars_el_prev = nodal_vars_prev[eldofs]
+        # assemble_up dispatch on rheology type parameters
+        @timeit "assemble cell" assemble_res_cell!(re, model, cell, cvu, cvD, n1, n2, u▄, D▄, nodal_vars_el, nodal_vars_el_prev)
+
+        # increment global residual with local ones
+        assemble!(res, eldofs, re)
+    end
+end
+# function f!(res,u0)
+#
+# end
+
+function doassemble!(model::Model{dim,1,D,V,E,P},nbasefuncs, u ; noplast = false) where {dim,D,V,E,P}
     assembler = start_assemble(model.K, model.RHS)
 
     # Only one primitive variable here
@@ -87,10 +228,79 @@ function doassemble!(model::Model{dim,1,Nothing,V,E,P},nbasefuncs, u ; noplast =
         eldofs = celldofs(cell)
         ue = u[eldofs]
 
-        @timeit "assemble cell" assemble_cell!(Ke, re, model, cell, cv, n, ue, noplast)
+        #@timeit "assemble cell"
+        assemble_cell!(Ke, re, model, cell, cv, n, ue, noplast)
 
         assemble!(assembler, eldofs, re, Ke)
     end
+end
+
+### individual assembly of res function and derivative K used for linesearch
+function doassemble_res!(model::Model{dim,1,D,V,E,P},nbasefuncs, u ; noplast = false) where {dim,D,V,E,P}
+    assembler = start_assemble(model.K, model.RHS)
+
+    # Only one primitive variable here
+    n = nbasefuncs[1]
+    cv = model.cellvalues_tuple[1]
+
+    # initialize local balance equation terms
+    re = zeros(n) # local force vector
+    Ke = zeros(n,n) # local stiffness matrix
+
+    @inbounds for (i,cell) in enumerate(CellIterator(model.dofhandler))
+        fill!(Ke, 0)
+        fill!(re, 0)
+
+        eldofs = celldofs(cell)
+        ue = u[eldofs]
+
+        #@timeit "assemble cell"
+        assemble_cell!(Ke, re, model, cell, cv, n, ue, noplast)
+
+        assemble!(assembler, eldofs, re, Ke)
+    end
+end
+
+doassemble_K!(model::Model{dim,1,D,V,E,P},nbasefuncs, u ; noplast = false) where {dim,D,V,E,P} = doassemble_K!(model.K, u, model, nbasefuncs ; noplast = false)
+function doassemble_K!(K, u::AbstractVector, cellvalues::CellVectorValues{dim},
+                    facevalues::FaceVectorValues{dim}, grid::Grid,
+                    dh::DofHandler,bcn::Maybe(Dict), mp, states, t; noplast = false) where {dim}
+
+    assembler = start_assemble(K)
+    # Only one primitive variable here
+    n = nbasefuncs[1]
+    cv = getnbasefunctions(cellvalues[1])
+    Ke = zeros(n,n) # local stiffness matrix
+
+    @inbounds for (i,cell) in enumerate(CellIterator(model.dofhandler))
+        fill!(Ke, 0)
+
+        eldofs = celldofs(cell)
+        ue = u[eldofs]
+
+        #@timeit "assemble cell"
+        assemble_cell!(Ke, re, model, cell, cv, n, ue, noplast)
+
+        assemble!(assembler, eldofs, re, Ke)
+    end
+end
+function doassemble_K(K::SparseMatrixCSC, u::AbstractVector, cellvalues::CellVectorValues{dim},
+                    facevalues::FaceVectorValues{dim}, grid::Grid,
+                    dh::DofHandler,bcn::Maybe(Dict), mp, states, t ; elastic_only = false) where {dim}
+    assembler = start_assemble(K)
+    nu = getnbasefunctions(cellvalues)
+    ke = zeros(nu, nu) # element tangent matrix
+
+    @inbounds for (i, cell) in enumerate(CellIterator(dh))
+        state, r = states[i], mp[i]
+        fill!(ke, 0)
+        eldofs = celldofs(cell)
+        ue = u[eldofs]
+        assemble_cell_K!(ke, cell, cellvalues, facevalues, grid, r, bcn,
+                       ue, state, t, nu, elastic_only)
+        assemble!(assembler, eldofs, ke)
+    end
+    return K
 end
 
 function symmetrize_lower!(K)
@@ -109,10 +319,15 @@ Apply traction boundary conditions on the element force vector `fe`. This is don
 Time dependency of the traction function is not allowed for now.
 
 """
-
-function apply_Neumann_bc!(fe, model, cell::CellIterator, n_basefuncs)
+function apply_Neumann_bc!(fe, model, cell::CellIterator, n_basefuncs ; inc_sign = +)
     t = (model.clock isa Clock) ? model.clock.current_time : 0.0
     model.neumann_bc != nothing && @inbounds for face in 1:nfaces(cell)
+        try
+            onboundary(cell, face)
+        catch e
+            println("cellid : ", cell.current_cellid)
+            println("faceid : ", face)
+        end
         if onboundary(cell, face)
             for (neumann_set, traction_func) in pairs(model.neumann_bc)
                 if (cellid(cell), face) ∈ getfaceset(model.grid, neumann_set)
@@ -124,7 +339,8 @@ function apply_Neumann_bc!(fe, model, cell::CellIterator, n_basefuncs)
                         dΓ = getdetJdV(model.facevalues, q_point)
                         for i in 1:n_basefuncs
                             δu = shape_value(model.facevalues, q_point, i)
-                            fe[i] += (δu ⋅ face_traction) * dΓ
+                            (inc_sign == +) && (fe[i] += (δu ⋅ face_traction) * dΓ)
+                            (inc_sign == -) && (fe[i] -= (δu ⋅ face_traction) * dΓ)
                         end
                     end
                 end

@@ -93,8 +93,23 @@ function timestep!(c::Clock)
     return nothing
 end
 
+function timestep!(c::Clock,Δt)
+    c.Δt = min(Δt, c.Δt_max, c.Δt)
+    # handle the case when timestepping overshoots the maximum simulation time
+    if (c.current_time + c.Δt) > c.tspan[2]
+        c.Δt = c.tspan[2] - c.current_time
+        c.current_time = c.tspan[2]
+    else
+        # don't update first iteration time to start at tspan[1]
+        (c.iter != 0) && (c.current_time += c.Δt)
+    end
+    c.iter += 1
+    (c.iter != 0) && push!(c.time_vec,c.current_time)
+    return nothing
+end
+
 function undo_timestep!(c::Clock)
-    c.current_time -= c.Δt
+    (c.iter > 1) && (c.current_time -= c.Δt)
     c.iter -= 1
     pop!(c.time_vec)
     return nothing
