@@ -312,6 +312,7 @@ gettypeparameters(::Rheology{T,D,V,E,P}) where {T,D,V,E,P} = (T,D,V,E,P)
 function set_initial_solution_vector!(u,dh,initial_values::Vector)
     u .= initial_values
 end
+
 function set_initial_solution_vector!(u,dh,initial_values::Dict)
     vars = keys(initial_values)
     field_names = dh.field_names
@@ -378,10 +379,6 @@ function set_initial_solution_vector!(u,dh,initial_values::Dict)
     return nothing
 end
 
-Cell{2,3,3}  => "Triangle",
-Cell{2,6,3}  => "QuadraticTriangle",
-Cell{2,4,4}  => "Quadrilateral",
-Cell{2,9,4}  => "QuadraticQuadrilateral",
 
 # "Quadrilateral"
 # function get_dofs_coordinates(cell,ndofs,offset,cell_type::Cell{2,4,4})
@@ -428,4 +425,29 @@ function get_field_dofs(field::Symbol, model)
         append!(field_dofs, cell_dofs[fields_offset_incell[field_id]:fields_offset_incell[field_id+1] - 1])
     end
     return unique(field_dofs)
+end
+
+function get_boundary_matrix(facesets)
+    boundary_set = Set{Tuple{Int,Int}}()
+    for (k,v) in pairs(facesets)
+        push!(boundary_set, v...)
+    end
+    boundary = J.boundaries_to_sparse(boundary_set)
+    return boundary
+end
+
+
+# import and extend JuAFEM generate_grid function to work with gmsh files
+#import JuAFEM: generate_grid
+function generate_grid(meshfile::String)
+
+    el_type_str, higher_order_el_mat, meshnodes, facesets, nodesets = GmshParser.extract_mesh(meshfile)
+    el_type = eval(Base.Meta.parse(el_type_str))
+    #println("typeof(el_type) : ", el_type)
+    boundary_matrix = get_boundary_matrix(facesets)
+
+    nodes = [Node((x[4], x[5])) for x in meshnodes]
+    elements = [el_type((convert.(Ref(Int),higher_order_el_mat[i,2:end])...,)) for i in 1:size(higher_order_el_mat,1)]
+
+    return Grid(elements, nodes, Dict{String,Set{Int}}(), nodesets, facesets, boundary_matrix)
 end

@@ -290,7 +290,7 @@ function Base.show(io::IO, ::MIME"text/plain",
 end
 
 ## Damage concrete types :
-### BHAT ROSAKIS SAMMIS micromechanical parameters ###
+### Bhat, Rosakis & Sammis micromechanical parameters ###
 @kwdef mutable struct BRSDamage{T} <: Damage{T}
     μ::F64orFunc = 0.6 # Friction coef
     β::F64orFunc = 0.1 # Correction factor

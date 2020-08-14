@@ -9,13 +9,11 @@ function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{D
 
     # number of base functions per element
     nbasefuncs = getnbasefunctions.(model.cellvalues_tuple)
-    dofs_D = get_field_dofs(:D,model)
-    dofs_disp = [i for i in eachindex(u) if i ∉ dofs_D]
 
-    #### TEST ####
-    dofs_disp2 = get_field_dofs(:u,model)
-    @assert (all(dofs_disp .== dofs_disp2))
-    ##############
+    # respective fields global dofs
+    dofs_D = get_field_dofs(:D,model)
+    dofs_disp = get_field_dofs(:u,model)
+    #dofs_disp = [i for i in eachindex(u) if i ∉ dofs_D] # first is faster
 
     # flags for restarting nonlinear iterations
     divergence_flag = false # flag when diverging residual norm
@@ -26,8 +24,8 @@ function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{D
     norm_prev = 0.0
 
     # apply boundary dirichlet boundary conditions to u :
-    update!(dbc, clock.current_time) # evaluates the D-bndc at time t
-    apply!(u, dbc)  # set the prescribed values in the solution vector
+    update!(dbc, clock.current_time) # evaluates the Dirichlet-bcs at time t
+    apply!(u, dbc)  # set the prescribed dbcs values in the solution vector
 
 
     newton_itr = -1 # initialize non linear iteration count
@@ -38,18 +36,20 @@ function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{D
                 tt = @elapsed doassemble_elast!(res, K, model, nbasefuncs, u, u_prev)
             else
                 tt = @elapsed doassemble_AD!(res, K, model, nbasefuncs, u, u_prev)
-                println("AD Jacobian L2-norm conditioning = ", cond(Array(K)))
+                K_mat = Array(K)
+                println("AD Jacobian L2-norm conditioning = ", cond(K_mat)) # SLOOOW
+                println("AD Jacobian L2-norm u-u block conditioning = ", cond(K_mat[dofs_disp,dofs_disp]))
+                println("AD Jacobian L2-norm D-D block conditioning = ", cond(K_mat[dofs_D,dofs_D]))
             end
             println("assemble time : ", tt)
-            # compute residual norm TODO maybe compute norm on exp(log(D))
+            # compute residual norm
             norm_res = norm(res[JuAFEM.free_dofs(dbc)])
 
             # print current Newton iteration
-            print("\nIteration: $newton_itr \tresidual: $(@sprintf("%.8f", norm_res))\n")
+            print("\nIteration: $newton_itr \tresidual: $(@sprintf("%.8f", norm_res))\n\n")
 
             #### Max D TEST :
             if model.material_properties[1].damage isa Damage
-                dofs_D = get_field_dofs(:D,model)
                 logD = u[dofs_D]
                 logD_prev = u_prev[dofs_D]
                 max_δD = maximum(exp.(logD).-exp.(logD_prev))
@@ -153,8 +153,14 @@ function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{D
                 # println("Preconditioned Jacobian L2-norm conditioning = ", cond(Array(invP*J)))
                 #@timeit "linear_solve" δu .= solver.linear_solver(invP*J,Array(-invP*res),model)
 
+                # ################################################
+                # ################################################
+
                 @timeit "apply_dbc" apply_zero!(K, res, dbc)
-                @timeit "linear_solve" δu .= solver.linear_solver(K,-res,model)
+                P = Diagonal(K)
+                invP = sparse(inv(Array(K)))
+                println("Preconditioned AD Jacobian L2-norm conditioning = ", cond(Array(invP*K)))
+                @timeit "linear_solve" δu .= solver.linear_solver(invP*K,Array(-invP*res),model)
 
                 ##### TEST #####
                 println("δD damaged extrema = ", extrema(exp.(δu[dofs_D])))
@@ -190,7 +196,7 @@ function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{D
             # end
         end
         ###### TEST
-        vtk_grid("TEST_u-D_iter$(newton_itr)", model.dofhandler) do vtkfile
+        vtk_grid("TEST_u-logD_iter$(newton_itr)", model.dofhandler) do vtkfile
             u2 = copy(u)
             u2[dofs_D] .= exp.(u2[dofs_D]) # coming back to damage from log(damage)
             vtk_point_data(vtkfile, model.dofhandler, u2)

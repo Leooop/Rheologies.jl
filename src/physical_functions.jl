@@ -53,16 +53,14 @@ compute_A(r::Rheology,c1,c2,c3) = r.damage.μ*c1 + (1.0 + r.damage.μ*c2)*c3
 compute_A(d::Damage,c1,c2,c3) = d.μ*c1 + (1.0 + d.μ*c2)*c3
 compute_B(c1,c2,c3) = c1 + c2*c3
 
-function compute_AB(r::Rheology,c1,c2,c3)
-    A = compute_A(r,c1,c2,c3)
+function compute_AB(d::Damage,c1,c2,c3)
+    A = compute_A(d,c1,c2,c3)
     B = compute_B(c1,c2,c3)
     return A, B
 end
-function compute_AB(r,c1,c2,c3)
-    A = compute_A(r,c1,c2,c3)
-    B = compute_B(c1,c2,c3)
-    return A, B
-end
+compute_AB(r::Rheology,c1,c2,c3) = compute_AB(r.damage,c1,c2,c3)
+
+
 # eq 11 in Harsha's notes :
 compute_A1(r::Rheology,A) = A * sqrt((π*r.damage.D₀*(1 - r.elasticity.ν))/cosd(r.damage.ψ)^3)
 compute_B1(r::Rheology,B) = B * sqrt((π*r.damage.D₀*(1 - r.elasticity.ν))/cosd(r.damage.ψ)^3)
@@ -97,14 +95,6 @@ function compute_KI(r::Rheology,σ,τ,D)
     return (A*σ + B*τ) * sqrt(π*r.damage.a)
 end
 
-function compute_KI(r::Rheology,σij,D)
-    c1, c2, c3 = compute_c1c2c3(r,D)
-    A, B = compute_AB(r,c1,c2,c3)
-    p = 1/3 * tr(σij) # trial pressure, negative in compression
-    sij = dev(σij) # trial deviatoric stress
-    τ = get_τ(sij,r.damage)
-    return (A*p + B*τ) * sqrt(π*r.damage.a)
-end
 function compute_KI(d::Damage,σij,D)
     c1, c2, c3 = compute_c1c2c3(d,D)
     A, B = compute_AB(d,c1,c2,c3)
@@ -113,6 +103,8 @@ function compute_KI(d::Damage,σij,D)
     τ = get_τ(sij,d)
     return (A*p + B*τ) * sqrt(π*d.a)
 end
+
+compute_KI(r::Rheology,σij,D) = compute_KI(r.damage,σij,D)
 
 function compute_Γ(r::Rheology,A₁,B₁)
     ν = r.elasticity.ν
@@ -280,7 +272,7 @@ function get_damage_constrained_Δt(model,u,ΔD_max)
         for qp in nqp
             state = states[qp]
             D = function_value(model.cellvalues_tuple[2],qp,De)
-            KI = compute_KI(r,state.σ,D)
+            KI = compute_KI(r,state.temp_σ,D)
             dDdt = compute_subcrit_damage_rate(r, KI, D)
             Δt_max = min(ΔD_max/dDdt,Δt_max)
             dDdt_max = max(dDdt,dDdt_max)
@@ -382,6 +374,7 @@ function compute_σij(r,A1,B1,Γ,ϵij)
     return (G/Γ) * (term1 + (term2 + term3)*Id)
 end
 
+# CHECKED WITH ALL USED FUNCTIONS
 function compute_σij(r,D,ϵij)
     # TODO make a visco elastic version of this function
 

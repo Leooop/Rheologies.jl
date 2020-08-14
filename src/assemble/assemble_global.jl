@@ -322,6 +322,12 @@ Time dependency of the traction function is not allowed for now.
 function apply_Neumann_bc!(fe, model, cell::CellIterator, n_basefuncs ; inc_sign = +)
     t = (model.clock isa Clock) ? model.clock.current_time : 0.0
     model.neumann_bc != nothing && @inbounds for face in 1:nfaces(cell)
+        try
+            onboundary(cell, face)
+        catch e
+            println("cellid : ", cell.current_cellid)
+            println("faceid : ", face)
+        end
         if onboundary(cell, face)
             for (neumann_set, traction_func) in pairs(model.neumann_bc)
                 if (cellid(cell), face) ∈ getfaceset(model.grid, neumann_set)

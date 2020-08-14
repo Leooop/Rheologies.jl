@@ -143,7 +143,7 @@ function compute_stress_tangent(ϵ,
         Δλ = Δλ_factor * F_trial
 
         ##### Test the validity of the return mapping to the smooth portion of the cone
-        is_valid = τ_trial - G*Δλ >= 0
+        is_valid = (τ_trial - G*Δλ >= 0)
 
         ##### Use relevant return mapping algorithm
 

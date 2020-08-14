@@ -1,11 +1,12 @@
 # Rheologies
 
-A [Julia](http://julialang.org) package for finite element based simulations of visco-elasto-plastic deformation. It extends the `JuAFEM` package, used as a toolbox for finite element modeling.
+A [Julia](http://julialang.org) package for finite element based simulations of damaged-visco-elasto-plastic deformation. It extends the `JuAFEM` package, used as a toolbox for finite element modeling.
 
+This package is a WIP, in development during my PhD.
 
+<!---
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://Leooop.github.io/Rheologies.jl/stable)
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://Leooop.github.io/Rheologies.jl/dev)
-<!---
 [![Build Status](https://travis-ci.com/Leooop/Rheologies.jl.svg?branch=master)](https://travis-ci.com/Leooop/Rheologies.jl)
 [![Build Status](https://ci.appveyor.com/api/projects/status/github/Leooop/Rheologies.jl?svg=true)](https://ci.appveyor.com/project/Leooop/Rheologies-jl)
 [![Codecov](https://codecov.io/gh/Leooop/Rheologies.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/Leooop/Rheologies.jl)
@@ -42,29 +43,45 @@ Elasto-plastic 2D plane strain deformation :
 ```julia
 using Rheologies
 
+####################
 ## SPATIAL DOMAIN ##
+####################
+
 dim = 2 # spatial dimensions
 
-# rectangular material discretization and geometry
-nx = 80 # n elements along x
-ny = 160 # n elements along y
-Lx = 0.05 # length along x
-Ly = 0.1 # length along y
-el_geom = Quadrilateral # element geometry (Quadrilateral or Triangle)
+# spatial domain size
+Lx = 1.0
+Ly = 2.0
+radius = Lx/40 # weak seed radius
+lowres = 0.03 # elements size far from the seed
+highres = 0.002 # elements size near the seed
+el_geom = Triangle # elements geometry (linear)
 
-# generate the grid and sets:
-grid = generate_grid(el_geom, (nx, ny), Vec(0.0,0.0), Vec(Lx,Ly)) # can take 2 or 4 corners
-# Add facesets / nodesets / cellsets on which Dirichlet bc will be applied (top, bottom, left and right boundary are implemented by default)
-addnodeset!(grid, "clamped", x -> ( (x[1] == Lx/2) & (x[2] in (0.0, Ly)) ) ); # middle of the top and bottom boundaries
+# generate the mesh and grid :
+meshfile = "/Users/leo/Documents/THESE/JULIA/GMSH_meshes/inclusion.msh"
+generate_mesh_inclusion(; Lx, Ly, radius ,lowres, highres, file=meshfile)
+grid = generate_grid(meshfile)
 
+# Add facesets / nodesets / cellsets on which boundary conditions will be applied (boundaries (facesets) are easily defined and named when building gmsh geometry)
+addnodeset!(grid, "clamped", x -> ( (x[1] ≈ Lx/2) & any(x[2] .≈ (0.0,Ly)) ) ) # middle of the top and bottom boundaries
+
+############################################
 ## PRIMITIVE VARIABLES AND INTERPOLATIONS ##
+############################################
+
 variables = PrimitiveVariables{1}((:u,), (2,), el_geom) # {1} variable :u with second order interpolation on el_geom
 
+################
 ## QUADRATURE ##
+################
+
 quad_order = 2 # quadrature order
 quad_type = :legendre # quadrature rule (:legendre or :lobatto)
 
+#########################
 ## BOUNDARY CONDITIONS ##
+#########################
+
 ## DIRICHLET :
     # KEY : set on which to apply bc
     # VALUES :
@@ -73,43 +90,59 @@ quad_type = :legendre # quadrature rule (:legendre or :lobatto)
          # 3) constrained components of the variable
 ## NEUMANN :
     # KEY : set on which to apply neumann bc
-    # VALUES : traction as a function of (x,t)
+    # VALUES : tractions as a function of (x,t)
 
-v_in = 1e-6 # inflow velocity
-# Apply inward displacement to top and bottom boundaries and fix "clamped" set to prevent rigid body motion
+v_in = 1e-5 # inflow velocity
+# Apply inward displacement at top and bottom boundaries and fix "clamped" set to prevent rigid body motion
 bc = BoundaryConditions(dirichlet = Dict("top" => [:u, (x,t)-> -v_in*t, 2],
                                          "bottom" => [:u, (x,t)-> v_in*t, 2],
                                          "clamped" => [:u, (x,t)-> 0.0, 1]),
                         neumann   = nothing)
 
-# BODY FORCES (not stable for now)
-bf = BodyForces([0.0,0.0]) #-9.81*2700
+#################
+## BODY FORCES ##
+#################
 
-## MATERIAL RHEOLOGY :
+bf = BodyForces([0.0,0.0]) # No body forces here
+
+#######################
+## MATERIAL RHEOLOGY ##
+#######################
+
 seed(x,x0,r,val_in::T,val_out::T) where {T<:Real} = (sqrt((x[1]-x0[1])^2 + (x[2]-x0[2])^2) <= r ?
-                                   val_in : val_out)
+                                                     val_in : val_out)
 
-elas = Elasticity(E = x -> seed(x,Vec(Lx/2,Ly/2),2Lx/nx,30e9,70e9),
-                  ν = 0.3)
+# Define seed location and radius according to the mesh geometry
+x0 = Vec(0.5,1.0)
+elas = Elasticity(E = x -> seed(x,x0,radius,30e9,70e9),
+                  ν = x -> seed(x,x0,radius,0.45,0.3) )
 
-Δσ = 2e4
+Δσ = 5e3
 plas  = DruckerPrager(ϕ = 30.0,
-                      C = 1e6,
+                      C = x -> seed(x,x0,radius,1e6,2e6),
                       H = -5e7,
                       ηᵛᵖ = Δσ*Ly/(2*v_in) )
 
 rheology = Rheology(elasticity = elas,
                     plasticity = plas)
 
-
+#################
 ## TIME DOMAIN ##
-clock = Clock(tspan = (0.0,20.0), Δt = 2) # in seconds
+#################
+# Δt_fact_up determines the scaling factor of the next timestep at each successfull time iteration
+clock = Clock(tspan = (0.0,50.0), Δt = 1.0, Δt_max = 10.0, Δt_fact_up = 1.2) # in seconds
 
+##############
 ### SOLVER ###
-# Use Newton Raphson non linear iterations
+##############
+
+# Use Newton-Raphson non linear iterations
 nlsolver = NewtonRaphson(atol = 1e-5, linear_solver = BackslashSolver())
 
+#############
 ### MODEL ###
+#############
+
 model = Model( grid = grid,
                variables = variables,
                quad_order = quad_order,
@@ -117,25 +150,37 @@ model = Model( grid = grid,
                bc = bc,
                body_forces = bf,
                rheology = rheology,
+               initial_state = nothing, # used if non-zero initial primitive variables values are needed
                clock = clock,
                solver = nlsolver )
 
+###############
 ### OUTPUTS ###
+###############
+
 path = "path/to/folder"
 
-# what to export :
+# some outputs :
 #key : name of the field
-#value : function of (r,s) for rheology instance and state instance, state object contains σ and ϵ (+ ϵᵖ and ϵ̅ᵖ for plastic material)
-outputs = Dict( :σxx     => (r,s)-> s.σ[1,1],
-                :σyy     => (r,s)-> s.σ[2,2],
-                :σzz     => (r,s)-> s.σ[3,3],
-                :ϵxx     => (r,s)-> s.ϵ[1,1],
-                :ϵyy     => (r,s)-> s.ϵ[2,2],
-                :ϵzz     => (r,s)-> s.ϵ[3,3],
-                :ϵ_dev_inv2 => (r,s) -> sqrt(dev(s.ϵ)⊡dev(s.ϵ)),
-                :acum_ep => (r,s)-> s.ϵ̅ᵖ )
+#value : function of (r,s) for rheology instance and state instance respectively, state object contains σ and ϵ (+ ϵᵖ and ϵ̅ᵖ for plastic material)
+outputs = Dict(:σxx     => (r,s)-> s.σ[1,1],
+               :σyy     => (r,s)-> s.σ[2,2],
+               :σzz     => (r,s)-> s.σ[3,3],
+               :ϵxx     => (r,s)-> s.ϵ[1,1],
+               :ϵyy     => (r,s)-> s.ϵ[2,2],
+               :ϵzz     => (r,s)-> s.ϵ[3,3],
+               :ϵ_vol   => (r,s)-> tr(s.ϵ),
+               :gamma   => (r,s)-> sqrt(2* dev(s.ϵ) ⊡ dev(s.ϵ)),
+               :E       => (r,s)-> r.elasticity.E,
+               :nu      => (r,s)-> r.elasticity.ν,
+               :norm_ep => (r,s)-> norm(s.ϵᵖ),
+               :τ       => (r,s)-> R.get_τ(dev(s.σ),r.plasticity),
+               :p       => (r,s)-> -1/3 * tr(s.σ),
+               :τoverp  => (r,s)-> R.get_τ(dev(s.σ),r.plasticity)/(-1/3 * tr(s.σ))
+               )
 
-ow = VTKOutputWriter(model, path, outputs, interval = 1) # every `interval` iteration (can also be every `frequency` seconds if `frequency` keyword is used instead)
+# we here export previous values to a VTK file. It is also possible to export JLD2 format using JLD2OutputWriter or even MATLAB format using MATOutputWriter.
+ow = VTKOutputWriter(model, path, outputs, interval = 1) # every `interval` iteration (can also be every `frequency` seconds if `frequency` keyword is used instead of `interval`)
 
 ### SOLVE ###
 @time model_sol, u = solve(model ; output_writer = ow, log = true) # log enables a performance evaluation of the simulation

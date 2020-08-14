@@ -19,7 +19,38 @@ function solve(model::Model; initial_values = nothing, output_writer = nothing, 
 end
 
 
-function iterate(model::Model{2,N,Nothing,Nothing,E,Nothing}, output_writer, initial_values = nothing) where {N,E<:Elasticity}
+function iterate(model::Model{2,1,Nothing,Nothing,E,Nothing}, output_writer, initial_values = nothing) where {E<:Elasticity}
+    @info "Rheology is purely elastic. Displacement field is solved once at the end of the requested time interval"
+    c = model.clock
+    c.current_time = c.tspan[2]
+    # number of base functions per element
+    nbasefuncs = getnbasefunctions.(model.cellvalues_tuple)
+
+    # assembly of
+    @timeit "assemble" doassemble!(model,nbasefuncs)
+
+    #Apply Dirichlet boundary conditions
+    update!(model.dirichlet_bc, c.current_time)
+    apply!(model.K, model.RHS, model.dirichlet_bc)
+
+    # Solve
+    #u = Symmetric(model.K) \ model.RHS
+    @timeit "linear_solve" u = linear_solve(model.K, model.RHS, model.solver)
+
+    # check convergence :
+    #fdofs = JuAFEM.free_dofs(dbc) no need for free dofs
+    norm_res = norm(model.RHS - model.K*u)
+    @info "residual L2 norm : $norm_res"
+    # update material states :
+    fill_state_from_u!(model,u) # fill temporary stress and strains
+    update_material_state!(model) # set temporary values to converged type fields
+
+    # output
+    @timeit "export" write_output!(model, u, output_writer)
+
+    return u
+end
+function iterate(model::Model{2,2,Nothing,Nothing,E,Nothing}, output_writer, initial_values = nothing) where {E<:Elasticity}
     @info "Rheology is purely elastic. Displacement field is solved once at the end of the requested time interval"
     c = model.clock
     c.current_time = c.tspan[2]
@@ -46,6 +77,8 @@ function iterate(model::Model{2,N,Nothing,Nothing,E,Nothing}, output_writer, ini
 
     return u
 end
+#iterate(model::Model{2,1,Nothing,Nothing,E,Nothing}, output_writer, initial_values = nothing) where {E<:Elasticity} = iterate(model::Model{2,N,Nothing,Nothing,E,Nothing}, output_writer, initial_values) where {N,E<:Elasticity}
+
 
 function iterate(model::Model{2,2,D,V,E,P}, output_writer, initial_values = nothing) where {N,D,V,E,P}
 
@@ -76,7 +109,7 @@ function iterate(model::Model{2,2,D,V,E,P}, output_writer, initial_values = noth
     end
     ######
     # Tuple of the number of shape functions per element and per field
-    nbasefuncs = getnbasefunctions.(model.cellvalues_tuple)
+    #nbasefuncs = getnbasefunctions.(model.cellvalues_tuple)
 
 
     while clock.current_time <= clock.tspan[2]
@@ -219,7 +252,7 @@ function perform_elastic_solve!(u,model)
 end
 
 
-function iterate(model::Model{2,1,D,V,E,P}, output_writer, initial_values = nothing) where {N,D,V,E,P}
+function iterate(model::Model{2,1,D,V,E,P}, output_writer, initial_values = nothing) where {D,V,E,P}
 
     # Unpack some model fields
     dh, dbc, cv, clock = model.dofhandler, model.dirichlet_bc, model.cellvalues_tuple, model.clock

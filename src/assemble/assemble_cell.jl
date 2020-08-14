@@ -135,6 +135,10 @@ function assemble_res_cell!(re, model::Model{dim,2,TD,Nothing,TE,TP}, cell, cvu,
             σ = compute_σij(r,D,ϵ)
 
             #### TEST
+            if (cell_id == 1) & (q_point == 1) & !(eltype(σ) <: ForwardDiff.Dual)
+                println("σ at cell_id & qp = 1 : ", σ)
+                println("σ_prev at cell_id & qp = 1 : ", state.temp_σ)
+            end
             if D <= r.damage.D₀
                 println("σ = ",σ)
             end
@@ -173,7 +177,7 @@ function assemble_res_cell!(re, model::Model{dim,2,TD,Nothing,TE,TP}, cell, cvu,
 
             # update qp state
             sol_type = eltype(nodal_vars_el)
-            if !(sol_type <: ForwardDiff.Dual)
+            if !(sol_type <: ForwardDiff.Dual) # allows AD without updating state
                 set_temp_state!(r,model.clock,state,σ,ϵ)
             end
 
@@ -182,8 +186,8 @@ function assemble_res_cell!(re, model::Model{dim,2,TD,Nothing,TE,TP}, cell, cvu,
 
             sol_type = eltype(nodal_vars_el)
             if sol_type <: ForwardDiff.Dual
-                state_dual = PlasticMaterialState{sol_type}()
-                add_state!(state_dual,state)
+                state_dual = PlasticMaterialState{sol_type}() # initializes with zero values
+                add_state!(state_dual,state) # add current state
                 σ, _ = compute_stress_tangent(ϵ, rp, state_dual, model.clock, noplast = false)
             else
                 σ, _ = compute_stress_tangent(ϵ, rp, state, model.clock, noplast = false)
@@ -191,7 +195,6 @@ function assemble_res_cell!(re, model::Model{dim,2,TD,Nothing,TE,TP}, cell, cvu,
 
             dDdt = 0.0
             for i in 1:nu
-                #
                 δϵ2D = shape_symmetric_gradient(cvu, q_point, i)
                 δϵ = SymmetricTensor{2,3}((i,j)->get_3D_func(i,j,δϵ2D))
                 δu = shape_value(cvu, q_point, i)
