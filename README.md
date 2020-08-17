@@ -2,7 +2,7 @@
 
 A [Julia](http://julialang.org) package for finite element based simulations of damaged-visco-elasto-plastic deformation. It extends the `JuAFEM` package, used as a toolbox for finite element modeling.
 
-This package is a WIP, in development during my PhD.
+This package is a PhD WIP. The examples may not be up to date at all time. I would be happy to help if needed, please get in touch.
 
 <!---
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://Leooop.github.io/Rheologies.jl/stable)
@@ -36,13 +36,15 @@ Requires Julia v1.3 or higher
 
 #### Examples
 
-In addition to these examples, most exported types and functions are documented. those can be explored with `?function_name` or `?type_name`
+In addition to these examples that are available in the `example` folder, most exported types and functions are documented. those can be explored with `?function_name` or `?type_name`.
 
-Elasto-plastic 2D plane strain deformation :
+2D plane strain deformation of an elastic - pressure sensitive plastic material containing a week seed :
 
 ```julia
-using Rheologies
+using Rheologies ; const R = Rheologies
 
+# include file defining mesh generation function
+include(joinpath(@__DIR__,"sample_circ_inclusion.jl"))
 ####################
 ## SPATIAL DOMAIN ##
 ####################
@@ -58,7 +60,7 @@ highres = 0.002 # elements size near the seed
 el_geom = Triangle # elements geometry (linear)
 
 # generate the mesh and grid :
-meshfile = "/Users/leo/Documents/THESE/JULIA/GMSH_meshes/inclusion.msh"
+meshfile = joinpath(@__DIR__,"inclusion.msh")
 generate_mesh_inclusion(; Lx, Ly, radius ,lowres, highres, file=meshfile)
 grid = generate_grid(meshfile)
 
@@ -130,7 +132,7 @@ rheology = Rheology(elasticity = elas,
 ## TIME DOMAIN ##
 #################
 # Δt_fact_up determines the scaling factor of the next timestep at each successfull time iteration
-clock = Clock(tspan = (0.0,50.0), Δt = 1.0, Δt_max = 10.0, Δt_fact_up = 1.2) # in seconds
+clock = Clock(tspan = (0.0,40.0), Δt = 1.0, Δt_max = 10.0, Δt_fact_up = 1.2) # in seconds
 
 ##############
 ### SOLVER ###
@@ -180,7 +182,7 @@ outputs = Dict(:σxx     => (r,s)-> s.σ[1,1],
                )
 
 # we here export previous values to a VTK file. It is also possible to export JLD2 format using JLD2OutputWriter or even MATLAB format using MATOutputWriter.
-ow = VTKOutputWriter(model, path, outputs, interval = 1) # every `interval` iteration (can also be every `frequency` seconds if `frequency` keyword is used instead of `interval`)
+ow = VTKOutputWriter(model, path, outputs, interval = 5, force_path = true) # every `interval` iteration (can also be every `frequency` seconds if `frequency` keyword is used instead of `interval`)
 
 ### SOLVE ###
 @time model_sol, u = solve(model ; output_writer = ow, log = true) # log enables a performance evaluation of the simulation

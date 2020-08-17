@@ -37,7 +37,7 @@ end
 """
     OutputWriter(format, model, path, outputs ; frequency = nothing, interval = nothing)
 
-`OutputWriter` constructor. One of the two kwargs has to be given.
+`OutputWriter` constructor. One of the kwargs `frequency` or `interval` has to be given.
 
 # Positional arguments
 - `format::Symbol` : exported file format. `:VTK`, `:JLD2` or `:MAT`
@@ -48,6 +48,7 @@ end
 # Keyword arguments
 - `frequency::F` : save output every `frequency` seconds
 - `interval::I` : save output every `interval` iterations
+- `force_path::Bool = true` : If false and path already exists, a new path variant is created
 """
 function OutputWriter(format, model, path, outputs, frequency, interval, force_path)
 
@@ -95,10 +96,18 @@ MATOutputWriter(model, path, outputs ; frequency = nothing, interval = nothing, 
 write_output!(model, u, ::Nothing) = nothing
 
 function write_output!(model, u, ow::OutputWriter{TF,F,I}) where {TF,F,I}
-    if I <: Real
-        ((model.clock.iter-1)%ow.interval != 0) && (return nothing)
-    elseif F <: Real
-        (model.clock.current_time - ow.last_output_time < ow.frequency) && (return nothing)
+    c = model.clock
+
+    if c.current_time != c.tspan[2]
+        if (I <: Real) & (F <: Real)
+            c1 = ((model.clock.iter-1)%ow.interval != 0)
+            c2 = (model.clock.current_time - ow.last_output_time < ow.frequency)
+            !(c1 || c2) && return nothing
+        elseif I <: Real
+            ((model.clock.iter-1)%ow.interval != 0) && (return nothing)
+        elseif F <: Real
+            (model.clock.current_time - ow.last_output_time < ow.frequency) && (return nothing)
+        end
     end
     # reinitialize data arrays
     for value in values(ow.data)
