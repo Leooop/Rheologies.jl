@@ -261,6 +261,7 @@ function iterate(model::Model{2,1,D,V,E,P}, output_writer, initial_values = noth
     n_dofs = ndofs(dh)  # total number of dofs
     u  = zeros(n_dofs)  # solution vector
     u_converged = copy(u) # backup solution vector
+    #u_grav_clean = copy(u)
     δu = zeros(n_dofs)  # displacement correction
 
     while clock.current_time <= clock.tspan[2]
@@ -283,6 +284,11 @@ function iterate(model::Model{2,1,D,V,E,P}, output_writer, initial_values = noth
                 undo_timestep!(clock)
                 clock.Δt *= clock.Δt_fact_down # decreased timestep
             else # converged
+
+                #### TODO clear gravity displacement field nicer
+                # if clock.current_time == 0
+                #     u_grav_clean .= u
+                # end
                 update_material_state!(model) # update converged state values
                 @timeit "export" write_output!(model, u, output_writer) # output
 

@@ -70,7 +70,16 @@ function map_entities_to_physical_names(meshstring)
                 for itag in 1:n_phys_tags
                     entity_tag = parse(Int,pointline[1])
                     phys_tag = parse(Int,pointline[5+itag])
-                    push!(entities_tag2name[dim_id], entity_tag => phys_tag2name[phys_tag])
+                    try
+                        push!(entities_tag2name[dim_id], entity_tag => phys_tag2name[phys_tag])
+                    catch e
+                        if e isa KeyError
+                            @info "This KeyError is frequent and due to dicrepancies between defined entities and physical groups names.\nPlease ensure that all entities have a name"
+                            throw(KeyError(phys_tag))
+                        else
+                            throw(e)
+                        end
+                    end
                 end
             end
         elseif dim_id >= 2
@@ -80,7 +89,16 @@ function map_entities_to_physical_names(meshstring)
                 for itag in 1:n_phys_tags
                     entity_tag = parse(Int,line_vec[1])
                     phys_tag = parse(Int,line_vec[8+itag])
-                    push!(entities_tag2name[dim_id], entity_tag => phys_tag2name[phys_tag])
+                    try
+                        push!(entities_tag2name[dim_id], entity_tag => phys_tag2name[phys_tag])
+                    catch e
+                        if e isa KeyError
+                            @info "This KeyError is frequent and due to dicrepancies between defined entities and physical groups names.\nPlease ensure that all entities have a name"
+                            throw(KeyError(phys_tag))
+                        else
+                            throw(e)
+                        end
+                    end
                 end
             end
         end
