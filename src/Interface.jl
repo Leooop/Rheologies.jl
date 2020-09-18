@@ -209,19 +209,19 @@ end
 
 function create_material_states(mp,vars::PrimitiveVariables{N},grid::Grid,cv,initial_state::Dict) where {N}
     nqp = getnquadpoints(cv)
-    ms = Vector{Vector{typeof(ms_type(mp))}}()
+    ms = Vector{Vector{typeof(ms_type(mp,vars))}}()
     for cellid in 1:getncells(grid)
         r = mp[cellid]
-        cell_ms = create_cell_material_states(r,N,grid,initial_state,cellid,nqp)
+        cell_ms = create_cell_material_states(r,vars,grid,initial_state,cellid,nqp)
         push!(ms,cell_ms)
     end
     return ms
 end
 
-function create_cell_material_states(r,n_prim_vars,grid,initial_state,cellid,nqp)
-    cell_ms = Vector{typeof(ms_type(r))}(undef,nqp)
+function create_cell_material_states(r,vars::PrimitiveVariables{N},grid,initial_state,cellid,nqp) where {N}
+    cell_ms = Vector{typeof(ms_type(r,vars))}(undef,nqp)
     for qp in 1:nqp
-        cell_ms[qp] = create_qp_material_state(r,n_prim_vars,grid,initial_state,cellid,qp)
+        cell_ms[qp] = create_qp_material_state(r,N,grid,initial_state,cellid,qp)
     end
     return cell_ms
 end
@@ -229,10 +229,10 @@ end
 function create_qp_material_state(r::Rheology{T,Nothing,V,E,Nothing},n_prim_vars,grid,initial_state,cellid,qp) where {T,V<:Viscosity,E<:Elasticity}
     for (key, value) in pairs(initial_state)
         if key in (:ϵ,:σ)
-            if value <: AbstractArray
+            if typeof(value) <: AbstractArray
                 (key == :ϵ) && (ϵ = value[cellid][qp])
                 (key == :σ) && (σ = value[cellid][qp])
-            elseif value <: Function
+            elseif typeof(value) <: Function
                 centroid_x = get_cell_centroid(grid,cellid)
                 (key == :ϵ) && (ϵ = value(centroid_x))
                 (key == :σ) && (σ = value(centroid_x))
@@ -249,12 +249,12 @@ end
 function create_qp_material_state(r::Rheology{T,Nothing,V,E,P},n_prim_vars,grid,initial_state,cellid,qp) where {T,V,E<:Elasticity, P<:Plasticity}
     for (key, value) in pairs(initial_state)
         if key in (:ϵᵖ,:ϵ̅ᵖ,:ϵ,:σ)
-            if value <: AbstractArray
+            if typeof(value) <: AbstractArray
                 (key == :ϵᵖ) && (ϵᵖ = value[cellid][qp])
                 (key == :ϵ̅ᵖ) && (ϵ̅ᵖ = value[cellid][qp])
                 (key == :ϵ) && (ϵ = value[cellid][qp])
                 (key == :σ) && (σ = value[cellid][qp])
-            elseif value <: Function
+            elseif typeof(value) <: Function
                 centroid_x = get_cell_centroid(grid,cellid)
                 (key == :ϵᵖ) && (ϵᵖ = value(centroid_x))
                 (key == :ϵ̅ᵖ) && (ϵ̅ᵖ = value(centroid_x))
@@ -275,13 +275,13 @@ end
 function create_qp_material_state(r::Rheology{T,TD,V,E,P},n_prim_vars,grid,initial_state,cellid,qp) where {T,TD<:Damage,V,E<:Elasticity,P}
     for (key, value) in pairs(initial_state)
         if key in (:D,:ϵᵖ,:ϵ̅ᵖ,:ϵ,:σ)
-            if value isa AbstractArray
+            if typeof(value) isa AbstractArray
                 (key == :D) && (D = value[cellid][qp])
                 (key == :ϵᵖ) && (ϵᵖ = value[cellid][qp])
                 (key == :ϵ̅ᵖ) && (ϵ̅ᵖ = value[cellid][qp])
                 (key == :ϵ) && (ϵ = value[cellid][qp])
                 (key == :σ) && (σ = value[cellid][qp])
-            elseif value isa Function
+            elseif typeof(value) isa Function
                 centroid_x = get_cell_centroid(grid,cellid)
                 (key == :D) && (D = value(centroid_x))
                 (key == :ϵᵖ) && (ϵᵖ = value(centroid_x))
@@ -293,11 +293,13 @@ function create_qp_material_state(r::Rheology{T,TD,V,E,P},n_prim_vars,grid,initi
             @warn "initial state key $key is skipped. Usable keys for $(rheology_summary(r)) rheology are :σ and :ϵ"
         end
     end
+
+    !@isdefined(D) && (D = r.damage.D₀ + 1e-9)
     if D <= r.damage.D₀
         @warn "initial damage $D is lower or equal to D₀. Set to (D₀ + 1e-9)"
         D = r.damage.D₀ + 1e-9
     end
-    !@isdefined(D) && (D = r.damage.D₀ + 1e-9)
+
     !@isdefined(ϵᵖ) && (ϵᵖ = zero(SymmetricTensor{2, 3}))
     !@isdefined(ϵ̅ᵖ) && (ϵ̅ᵖ = 0.0)
     !@isdefined(ϵ) && (ϵ = zero(SymmetricTensor{2, 3}))

@@ -233,6 +233,49 @@ function compute_subcrit_damage_rate(r::Rheology, KI, D)
     return dDdl * dldt
 end
 
+# dDdt_thresh=1e-10
+# KIC_max=1e8
+# ΔKI = d.K₁c*(dDdt_thresh/(1.5e3*0.24))^(1/d.n)
+# KI = -1e6:100:3e6
+# x = 2.5.*KI./ΔKI
+# KIC = (1.0 .- tanh.(x)).*(KIC_max - d.K₁c).*0.5 .+ d.K₁c
+
+function compute_subcrit_damage_rate_variable_KIC(r::Rheology, KI, D ; dDdt_thresh=1e-40, KIC_max=1e15 )
+    #((KI <= 0) | (D >= 1)) && (return 0.0)
+    d = r.damage
+    e = r.elasticity
+    ρ = 2700 ##### TODO better
+    Vs = sqrt(e.G/ρ)
+    Vr = Vs * (0.862 + 1.14e.ν)/(1 + e.ν)
+
+    dDdl = compute_dDdl(r,D) # damage derivative wrt crack length
+
+    # get KI length scale of transition from high KIC to real KIC
+    #println("KI : ",KI)
+    KIC = compute_KIC(r, KI, dDdt_thresh, KIC_max)
+
+    dldt = min(d.l̇₀*(abs(KI)/KIC)^(d.n),Vr)  # cracks growth rate
+
+    try @assert dDdl * dldt >= 0
+    catch e
+        println("KI : ", KI)
+        println("KIC : ", KIC)
+        throw(e)
+    end
+
+    return dDdl * dldt
+end
+
+function compute_KIC(r, KI, dDdt_thresh, KIC_max)
+    d = r.damage
+    ΔKI = d.K₁c*(dDdt_thresh/(1.5e3*d.l̇₀))^(1/d.n)
+    x = 2.5*KI/ΔKI
+    #println("x : ", x)
+    #println("tanh(x) : ", tanh(x))
+    KIC = (1.0 - tanh(x))*(KIC_max - d.K₁c)*0.5 + d.K₁c
+    return KIC
+end
+
 function compute_subcrit_damage_rate(r::Rheology, σ, τ, D)
     KI = compute_KI(r,σ,τ,D)
     # return zero if KI is negative
@@ -268,7 +311,7 @@ function get_damage_constrained_Δt(model,u,ΔD_max)
 
         cell_dofs = celldofs(cell)
         ue = u[cell_dofs]
-        De = ue[nu+1:end]
+        De = exp.(ue[nu+1:end])
         for qp in nqp
             state = states[qp]
             D = function_value(model.cellvalues_tuple[2],qp,De)
@@ -278,10 +321,30 @@ function get_damage_constrained_Δt(model,u,ΔD_max)
             dDdt_max = max(dDdt,dDdt_max)
         end
     end
-    println("dDdt_max based on converged σ and D = ",dDdt_max)
+    #println("dDdt_max based on converged σ and D = ",dDdt_max)
     return Δt_max
 end
 
+# function get_damage_constrained_Δt(model,ΔD_max)
+#     nqp = getnquadpoints(model.cellvalues_tuple[1])
+#     KI = 0.0
+#     for cell in CellIterator(model.dofhandler)
+#         cellid = cell.current_cellid.x
+#         r = model.material_properties[cellid]
+#         for qp in nqp
+#             state = model.material_state[cellid][qp]
+#             KI = max(KI,compute_KI(r,state.temp_σ,D))
+#         end
+#     end
+#     KI_max =
+#     D = function_value(model.cellvalues_tuple[2],qp,De)
+#     KI = compute_KI(r,state.temp_σ,D)
+#     dDdt = compute_subcrit_damage_rate(r, KI, D)
+#     Δt_max = min(ΔD_max/dDdt,Δt_max)
+#     dDdt_max = max(dDdt,dDdt_max)
+#     println("dDdt_max based on converged σ and D = ",dDdt_max)
+#     return Δt_max
+# end
 # function compute_subcrit_damage_rate(r::Rheology, σ::T, D) where {T<:AbstractArray}
 #     d = r.damage
 #     e = r.elasticity
@@ -399,7 +462,8 @@ function compute_σij(r,D,ϵij)
     ϵ = tr(ϵij)
     e = dev(ϵij)
     γ = sqrt(2.0 * e ⊡ e)
-
+    (γ == 0) && (γ = nextfloat(0.0))
+    (γ == Inf) && (γ = prevfloat(Inf))
     # stress tensor calculation
     term1 = ( (3*(1-2ν))/(1+ν) + A1^2 - A1*B1*ϵ/γ ) * ϵij
     term2 = (3ν/(1+ν) + B1^2/2 - A1^2/3 + A1*B1*ϵ/(3γ)) * ϵ

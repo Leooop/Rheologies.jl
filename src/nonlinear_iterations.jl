@@ -1,6 +1,6 @@
 nonlinear_solve!(u, u_prev, δu, model::Model{DIM,2,D,V,E,P,S}, restart_flag) where {DIM,D,V,E,P,S<:AbstractLinearSolver} = @error "Please choose a non linear solver"
 
-function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{DIM,2,TD,TV,TE,TP,TS}, restart_flag) where {DIM,TD,TV,TE,TP,TS<:AbstractNonLinearSolver}
+function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{DIM,2,Nothing,TV,TE,TP,TS}, restart_flag) where {DIM,TV,TE,TP<:ViscousDruckerPrager,TS<:AbstractNonLinearSolver}
 
     # Unpack some model fields
     grid, dh, dbc, mp, states, res, K, clock, solver = model.grid, model.dofhandler, model.dirichlet_bc, model.material_properties, model.material_state, model.RHS, model.K, model.clock, model.solver
@@ -11,7 +11,7 @@ function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{D
     nbasefuncs = getnbasefunctions.(model.cellvalues_tuple)
 
     # respective fields global dofs
-    dofs_D = get_field_dofs(:D,model)
+    dofs_field2 = get_field_dofs(dh.field_names[2],model)
     dofs_disp = get_field_dofs(:u,model)
     #dofs_disp = [i for i in eachindex(u) if i ∉ dofs_D] # first is faster
 
@@ -39,7 +39,7 @@ function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{D
                 K_mat = Array(K)
                 println("AD Jacobian L2-norm conditioning = ", cond(K_mat)) # SLOOOW
                 println("AD Jacobian L2-norm u-u block conditioning = ", cond(K_mat[dofs_disp,dofs_disp]))
-                println("AD Jacobian L2-norm D-D block conditioning = ", cond(K_mat[dofs_D,dofs_D]))
+                println("AD Jacobian L2-norm P-P block conditioning = ", cond(K_mat[dofs_field2,dofs_field2]))
             end
             println("assemble time : ", tt)
             # compute residual norm
@@ -47,16 +47,6 @@ function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{D
 
             # print current Newton iteration
             print("\nIteration: $newton_itr \tresidual: $(@sprintf("%.8f", norm_res))\n\n")
-
-            #### Max D TEST :
-            if model.material_properties[1].damage isa Damage
-                logD = u[dofs_D]
-                logD_prev = u_prev[dofs_D]
-                max_δD = maximum(exp.(logD).-exp.(logD_prev))
-                @assert all(logD.-logD_prev .>= 0)
-                print("\t max ΔD = ", max_δD, "\n")
-            end
-            ####
 
             #### EXIT CHECKS ####
             if (norm_res < solver.atol)
@@ -88,22 +78,117 @@ function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{D
                 return restart_flag
             end
 
+
+            @timeit "apply_dbc" apply_zero!(K, res, dbc)
+            @timeit "linear_solve" δu .= solver.linear_solver(K,-res,model)
+
+
+            # P = Diagonal(K)
+            # invP = sparse(inv(Array(K)))
+            # println("Preconditioned AD Jacobian L2-norm conditioning = ", cond(Array(invP*K)))
+            # @timeit "linear_solve" δu .= solver.linear_solver(invP*K,Array(-invP*res),model)
+
+            # solution correction
+            α = 1.0 # correction factor
             if newton_itr == 0
+                u .+= δu
+            else
+                u .+= α.*δu
+                (α != 1) && println("α = $alpha")
+            end
+        end
+        ###### TEST
+        # vtk_grid("TEST_u-logD_iter$(newton_itr)", model.dofhandler) do vtkfile
+        #     u2 = copy(u)
+        #     u2[dofs_field2] .= exp.(u2[dofs_field2]) # coming back to damage from log(damage)
+        #     vtk_point_data(vtkfile, model.dofhandler, u2)
+        # end
+        ######
+    end
+end
+
+function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{DIM,2,TD,TV,TE,TP,TS}, restart_flag) where {DIM,TD,TV,TE,TP,TS<:AbstractNonLinearSolver}
+
+    # Unpack some model fields
+    grid, dh, dbc, mp, states, res, K, clock, solver = model.grid, model.dofhandler, model.dirichlet_bc, model.material_properties, model.material_state, model.RHS, model.K, model.clock, model.solver
+
+    if clock.iter in (2,3)
+        println("ue cell 1 début nonlinearsolve : ")
+        display(u[1:22])
+    end
+    # number of base functions per element
+    nbasefuncs = getnbasefunctions.(model.cellvalues_tuple)
+
+    # respective fields global dofs
+    dofs_field2 = get_field_dofs(dh.field_names[2],model)
+    dofs_disp = get_field_dofs(:u,model)
+    #dofs_disp = [i for i in eachindex(u) if i ∉ dofs_D] # first is faster
+
+    # flags for restarting nonlinear iterations
+    divergence_flag = false # flag when diverging residual norm
+    max_iter_flag = false # flag when reaching max number of NL iterations
+
+    # some initializations
+    divergence_count = 0 # used to trigger reset of non linear iterations if residual norm diverges
+    norm_prev = 0.0
+
+    # apply boundary dirichlet boundary conditions to u :
+    update!(dbc, clock.current_time) # evaluates the Dirichlet-bcs at time t
+    apply!(u, dbc)  # set the prescribed dbcs values in the solution vector
+
+    if clock.iter in (2,3)
+        println("ue cell 1 nonlinearsolve apres apply dbc on u : ")
+        display(u[1:22])
+    end
+
+    newton_itr = -1 # initialize non linear iteration count
+    while true; newton_itr += 1
+        @timeit "Newton iter" begin
+
+            # print current Newton iteration
+            print("\nNEWTON ITERATION: $newton_itr\n\n")
+
+            #@timeit "assemble"
+            if (newton_itr == 0) | (restart_flag == false)
+                tt = @elapsed doassemble_elast!(res, K, model, nbasefuncs, u, u_prev)
+            elseif restart_flag == :activate_damage
+                #tt = @elapsed doassemble_elast!(res, K, model, nbasefuncs, u, u_prev) #TODO put back
+                tt = @elapsed doassemble_AD!(res, K, model, nbasefuncs, u, u_prev)
+                #K_mat = Array(K)
+                #println("AD Jacobian L2-norm conditioning = ", cond(K_mat)) # SLOOOW
+                #println("AD Jacobian L2-norm u-u block conditioning = ", cond(K_mat[dofs_disp,dofs_disp]))
+                #println("AD Jacobian L2-norm D-D block conditioning = ", cond(K_mat[dofs_field2,dofs_field2]))
+            end
+            println("assemble time : ", tt)
+
+            #### Max D TEST :
+            # if model.material_properties[1].damage isa Damage
+            #     logD = u[dofs_field2]
+            #     logD_prev = u_prev[dofs_field2]
+            #     max_δD = maximum(exp.(logD).-exp.(logD_prev))
+            #     @assert all(logD.-logD_prev .>= 0)
+            #     print("\t max ΔD = ", max_δD, "\n")
+            # end
+            ####
+
+            ### SOLVE ###
+
+            if (newton_itr == 0) | (restart_flag == false)
+                println("apply_zero and solve")
                 @timeit "apply_dbc" apply_zero!(K, res, dbc)
                 @timeit "linear_solve" δu .= solver.linear_solver(K,-res,model)
 
                 ##### TEST #####
-                println("δD elast extrema = ", extrema(exp.(δu[dofs_D])))
+                println("δD elast extrema (should be zero) = ", extrema(exp.(δu[dofs_field2])))
                 ################
-            else
+            elseif restart_flag == :activate_damage
 
-                ### test Δt wrt elastic stress solution
-                if newton_itr == 1
-                    u_exp = copy(u)
-                    u_exp[dofs_D] .= exp.(u_exp[dofs_D])
-                    Δt_max_damage = get_damage_constrained_Δt(model,u_exp,0.3)
-                    println("Δt max damage with elastic stress = ",Δt_max_damage)
-                end
+                ### test Δt wrt to previous stress solution
+                # u_exp = copy(u)
+                # u_exp[dofs_field2] .= exp.(u_exp[dofs_field2])
+                # Δt_max_damage = get_damage_constrained_Δt(model,u_exp,0.3)
+                # println("Δt max damage with elastic stress = ",Δt_max_damage)
+
 
                 # ################################################
                 # ### Compute Jacobian using finite difference ###
@@ -157,13 +242,15 @@ function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{D
                 # ################################################
 
                 @timeit "apply_dbc" apply_zero!(K, res, dbc)
-                P = Diagonal(K)
-                invP = sparse(inv(Array(K)))
-                println("Preconditioned AD Jacobian L2-norm conditioning = ", cond(Array(invP*K)))
-                @timeit "linear_solve" δu .= solver.linear_solver(invP*K,Array(-invP*res),model)
+                @timeit "linear_solve" δu .= solver.linear_solver(K,-res,model)
+                # P = Diagonal(K)
+                # invP = sparse(inv(Array(P)))
+                #@timeit "linear_solve" δu .= solver.linear_solver(invP*K,Array(-invP*res),model)
+                #println("Preconditioned AD Jacobian L2-norm conditioning = ", cond(Array(invP*K)))
+
 
                 ##### TEST #####
-                println("δD damaged extrema = ", extrema(exp.(δu[dofs_D])))
+                println("δD damaged extrema damaged iter = ", extrema(exp.(δu[dofs_field2])))
                 # TODO try to set negative δD to zero, remove it after test
                 # for i in dofs_D
                 #     if δu[i] < 0
@@ -180,29 +267,102 @@ function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{D
             # end
 
             # displacement and damage corrections
-            D = exp.(u[dofs_D])
-            δD = exp.(δu[dofs_D])
-            disp = u[dofs_disp]
-            δdisp = δu[dofs_disp]
+            if (newton_itr == 0) | (restart_flag == false)
+                u[dofs_disp] .+= δu[dofs_disp]
+                #u .+= δu
+            elseif restart_flag == :activate_damage
+                D = exp.(u[dofs_field2])
+                δD = exp.(δu[dofs_field2])
 
-            u[dofs_disp] .+= δdisp
-            u[dofs_D] .= log.(D .+ δD)
-
-            println("max δD newton_iter_$(newton_itr) : ", extrema(δD))
+                max_D_increment = 0.02
+                α = minimum(min.(Ref(1.0),max_D_increment./δD, 0.99 .- D)) # ensure that D increment is low enough
+                u[dofs_disp] .+= α.*δu[dofs_disp]
+                u[dofs_field2] .= log.(D .+ α.*δD) # damage increment is incremented at converged iteration only
+                println("α = ", α)
+                println("min/max δD newton_iter_$(newton_itr) : ", extrema(δD))
+                println("min/max effective α*δD newton_iter_$(newton_itr) : ", extrema(α.*δD))
+            end
             # Make sure that the elastic solve didn't affect Damage
             # if newton_itr == 0
             #     dofs_D = get_field_dofs(:D,model)
             #     u[dofs_D] .= u_prev[dofs_D]
             # end
+
+            # compute residual norm
+            free_dofs = JuAFEM.free_dofs(dbc)
+            free_disp_dofs = free_dofs[in.(free_dofs,Ref(dofs_disp))]
+            if (newton_itr == 0) | (restart_flag == false) # norm res on displacement
+                norm_res = norm(res[free_disp_dofs])
+            else # norm res on displacement and damage
+                norm_res = norm(res[free_dofs])
+                norm_res_disp = norm(res[free_disp_dofs])
+                norm_res_damage = norm(res[dofs_field2])
+            end
+
+            print("\ttotal residual: $(@sprintf("%.8f", norm_res))\n")
+            if !(newton_itr == 0) & !(restart_flag == false)
+                print("\tdisplacement residual: $(@sprintf("%.8f", norm_res_disp))\n")
+                print("\tdamage residual: $(@sprintf("%.8f", norm_res_damage))\n\n")
+            end
+            #### EXIT CHECKS ####
+
+            if (norm_res < solver.atol)
+                if restart_flag == :activate_damage
+                    restart_flag = false
+
+                    # increment damage
+                    # D = exp.(u[dofs_field2])
+                    # δD = exp.(δu[dofs_field2])
+                    # u[dofs_field2] .= log.(min.(D .+ δD, 0.99))
+
+
+                    println("convergence with damage growth, restart_flag set to false, should allow time stepping")
+                    break
+                elseif restart_flag == false
+                    restart_flag = :activate_damage
+                    println("convergence without damage growth, restart_flag set to :activate_damage, should restart time iteration")
+                    break
+                end
+            elseif (solver.max_iter_atol > 0) & (newton_itr == solver.max_iter_number) & (norm_res < solver.max_iter_atol)
+                if restart_flag == :activate_damage
+                    (norm_res >= solver.atol) && @warn("last newton iteration, accepted residual is ",norm_res)
+                    break
+                end
+            end
+
+            # if too many successive divergence, reset the nonlinear iterations from last time iteration solution u_converged using a lower timestep
+            if newton_itr == 0
+                norm_prev = norm_res
+            else
+                if norm_res >= norm_prev
+                    divergence_count += 1
+                else
+                    divergence_count = 0
+                end
+                norm_prev = norm_res
+            end
+
+            divergence_flag = (divergence_count == solver.max_div_iter)
+            max_iter_flag = (newton_itr == solver.max_iter_number)
+
+            if divergence_flag | max_iter_flag
+                divergence_flag && (@info "$(solver.max_div_iter) successive non linear iterations were diverging. Restart with decreased timestep")
+                max_iter_flag   && (@info "reached maximum number of non linear iterations : $(solver.max_iter_number). Restart with decreased timestep")
+                restart_flag = true
+                return restart_flag
+            end
+
         end
         ###### TEST
-        vtk_grid("TEST_u-logD_iter$(newton_itr)", model.dofhandler) do vtkfile
-            u2 = copy(u)
-            u2[dofs_D] .= exp.(u2[dofs_D]) # coming back to damage from log(damage)
-            vtk_point_data(vtkfile, model.dofhandler, u2)
-        end
+        # vtk_grid("TEST/TEST_u-logD_iter$(newton_itr)_timeit$(clock.iter)", model.dofhandler) do vtkfile
+        #     #u2 = copy(u)
+        #     #u2[dofs_field2] .= exp.(u2[dofs_field2]) # coming back to damage from log(damage)
+        #     vtk_point_data(vtkfile, model.dofhandler, u)
+        # end
+        # println("vtk test saved at ")
         ######
     end
+    return restart_flag
 end
 
 
@@ -298,11 +458,20 @@ function nonlinear_solve!(u::Vector, uprev::Vector, δu::Vector, model::Model{DI
             #     Pl = Preconditioners.AMGPreconditioner(Symmetric(K))
             #     IterativeSolvers.cg!(δu, Symmetric(K), res, Pl = Pl, solver.linear_solver.kwargs...)
             # end
+
             # displacement correction
-            u .+= δu
+
+            α = 1.0 # correction factor
+            if newton_itr == 0
+                u .+= δu
+            else
+                u .+= α.*δu
+                (α != 1) && println("α = $alpha")
+            end
 
         end
     end
+    return restart_flag
 end
 
 # function output_values(model::Model{dim,1,D,V,E,P}) where {dim,D,V,E,P<:Plasticity}

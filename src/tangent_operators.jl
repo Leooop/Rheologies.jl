@@ -233,7 +233,10 @@ function compute_stress_tangent(ϵ,
     Gratio = Gᵛᵉ/r.elasticity.G
     I2D = SymmetricTensor{2,3}(δ) # second order identity tensor
     σ⁰ = (1/3)*tr(s.σ)*I2D + Gratio*dev(s.σ)
-    ϵᵉ_trial = ϵ - s.ϵᵖ # trial-elastic_strain
+    # TODO find good expression for ϵᵉ_trial
+    #ϵᵉ_trial = ϵ - s.ϵᵖ # should be bad because doesn't take viscous deformation into account
+    ϵᵉ_trial = ϵ - s.ϵ
+
     σ_trial = σ⁰ + Dᵛᵉ ⊡ (ϵ - s.ϵ)
 
     if noplast # during first newton iteration to homogenize strain field
@@ -272,33 +275,49 @@ function compute_stress_tangent(ϵ,
         Δλ_factor = 1/(Gᵛᵉ + K*η*η̅ + ηᵛᵖ/clock.Δt + ξ^2*H) #ξ*H*∇Q_scalar
         Δλ = Δλ_factor * F_trial
 
-        ##### Compute unit deviatoric flow vector
-        ϵᵉdev_trial = dev(ϵᵉ_trial) #ϵᵉ_trial .- [ϵᵉvol_d3_trial, ϵᵉvol_d3_trial, ϵᵉvol_d3_trial, 0.0]
-        norm_ϵᵉdev_t = norm(ϵᵉdev_trial)#sqrt(ϵᵉdev_trial[1]^2 + ϵᵉdev_trial[2]^2 + ϵᵉdev_trial[3]^2 + 2*ϵᵉdev_trial[4]^2) # get the norm of the deviatoric elastic trial strain
+        ##### Test the validity of the return mapping to the smooth portion of the cone
+        is_valid = (τ_trial - Gᵛᵉ*Δλ >= 0)
 
-        # prevent division by zero if ϵᵉdev_trial is zero valued
-        if norm_ϵᵉdev_t != 0.0
-            inv_norm = 1.0/norm_ϵᵉdev_t
+        ##### Use relevant return mapping algorithm
+
+        if is_valid # return to the smooth portion of the cone
+            ##### Compute unit deviatoric flow vector
+            ϵᵉdev_trial = dev(ϵᵉ_trial) #ϵᵉ_trial .- [ϵᵉvol_d3_trial, ϵᵉvol_d3_trial, ϵᵉvol_d3_trial, 0.0]
+            norm_ϵᵉdev_t = norm(ϵᵉdev_trial)#sqrt(ϵᵉdev_trial[1]^2 + ϵᵉdev_trial[2]^2 + ϵᵉdev_trial[3]^2 + 2*ϵᵉdev_trial[4]^2) # get the norm of the deviatoric elastic trial strain
+
+            # prevent division by zero if ϵᵉdev_trial is zero valued
+            if norm_ϵᵉdev_t != 0.0
+                inv_norm = 1.0/norm_ϵᵉdev_t
+            else
+                inv_norm = 0.0
+            end
+            uni_dev = ϵᵉdev_trial*inv_norm # unit deviatoric flow vector
+
+            ##### assemble tangent
+            Isymdev = SymmetricTensor{4,3}(Isymdev_func) # fourth order deviatoric symmetric tensor
+            A = Δλ_factor
+            A_fact = 2Gᵛᵉ * (1.0 - Δλ/(sqrt(2)*norm_ϵᵉdev_t))
+            A_factd3 = A_fact/3
+            B_fact = 2Gᵛᵉ * (Δλ/(sqrt(2)*norm_ϵᵉdev_t) - Gᵛᵉ*A)
+            C_fact = -sqrt(2)*Gᵛᵉ*A*K
+            D_fact = K*(1.0 - K*η*η̅*A)
+            D = A_fact * Isymdev +
+                B_fact * uni_dev ⊗ uni_dev +
+                C_fact * (η * uni_dev⊗I2D + η̅ * I2D⊗uni_dev) +
+                D_fact * I2D ⊗ I2D #TODO check whether this form of the D term or the one from the book's code is the good one => (D_fact - A_factd3) or just D_fact.
+
+            Δϵᵖ = Δλ*∇Q # plastic strain increment
+            Δϵ̅ᵖ = Δλ*ξ # accumulated plastic strain increment
+            s.temp_σ = σ_trial - Δλ * Dᵛᵉ⊡∇Q
         else
-            inv_norm = 0.0
+            α = ξ/η
+            β = ξ/η̅
+            Δϵᵖ_vol = (p_trial - (C + H*s.ϵ̅ᵖ)*β) / (H*α*β + K)
+            Δϵᵖ = 1/3 * Δϵᵖ_vol * I2D
+            Δϵ̅ᵖ = α * Δϵᵖ_vol
+            s.temp_σ = (p_trial - K*Δϵᵖ_vol)*I2D
+            D = K * (1 - K/(K + α*β*H)) * I2D ⊗ I2D
         end
-        uni_dev = ϵᵉdev_trial*inv_norm # unit deviatoric flow vector
-
-        ##### assemble tangent
-        Isymdev = SymmetricTensor{4,3}(Isymdev_func) # fourth order deviatoric symmetric tensor
-        A = Δλ_factor
-        A_fact = 2Gᵛᵉ * (1.0 - Δλ/(sqrt(2)*norm_ϵᵉdev_t))
-        A_factd3 = A_fact/3
-        B_fact = 2Gᵛᵉ * (Δλ/(sqrt(2)*norm_ϵᵉdev_t) - Gᵛᵉ*A)
-        C_fact = -sqrt(2)*Gᵛᵉ*A*K
-        D_fact = K*(1.0 - K*η*η̅*A)
-        D = A_fact * Isymdev +
-            B_fact * uni_dev ⊗ uni_dev +
-            C_fact * (η * uni_dev⊗I2D + η̅ * I2D⊗uni_dev) +
-            D_fact * I2D ⊗ I2D #TODO check whether this form of the D term or the one from the book's code is the good one => (D_fact - A_factd3) or just D_fact.
-
-        Δϵᵖ = Δλ*∇Q # plastic strain increment
-        Δϵ̅ᵖ = Δλ*ξ # accumulated plastic strain increment
         s.temp_ϵ = ϵ
         s.temp_ϵᵖ = s.ϵᵖ + Δϵᵖ # plastic strain
         s.temp_ϵ̅ᵖ = s.ϵ̅ᵖ + Δϵ̅ᵖ # accumulated plastic strain
@@ -327,6 +346,7 @@ function compute_damaged_stiffness_tensor(r::Rheology,ϵij,D)
     e = dev(ϵij)
     γ = sqrt(2.0 * e ⊡ e)
 
+    @assert !isnan(G)
     @assert !isnan(c1)
     @assert !isnan(c2)
     @assert !isnan(c3)
@@ -343,20 +363,35 @@ function compute_damaged_stiffness_tensor(r::Rheology,ϵij,D)
     # println("(2*γ) : ", (2*γ))
     #@assert !isnan(A₁*B₁*ϵ/(2*γ)) # returns NaN, because 0/0
 
+    (γ == 0) && (γ += 1e-9)#zero(typeof(ϵij))) # TODO remove redundancy
     ϵ̂ = ϵij/γ
 
-    (γ == 0) && (γ += 1e-9 ; ϵ̂ = ϵij/γ)#zero(typeof(ϵij))) # TODO remove redundancy
-
     # get stiffness factors
-    Cμ = G/Γ * ( (3*(1-2ν))/(2*(1+ν)) + A₁^2/2 - A₁*B₁*ϵ/(2*γ) )
-    Cλ = G/Γ * ( 3*ν/(1+ν) + B₁^2/2 - A₁^2/3 + A₁*B₁*ϵ/γ + 2A₁*B₁*ϵ^3/(9γ^3) )
-    Cσ = - G/Γ * ( A₁*B₁ + 2*A₁*B₁*ϵ^2/(3*γ^2) )
-    Cσσ = G/Γ * (2A₁*B₁*ϵ/γ)
+    if G/Γ == 0
+        Cμ = 0.0
+        Cλ = 0.0
+        Cσ = 0.0
+        Cσσ = 0.0
+    else
+        Cμ = G/Γ * ( (3*(1-2ν))/(2*(1+ν)) + A₁^2/2 - A₁*B₁*ϵ/(2*γ) )
+        Cλ = G/Γ * ( 3*ν/(1+ν) + B₁^2/2 - A₁^2/3 + A₁*B₁*ϵ/γ + 2A₁*B₁*ϵ^3/(9γ^3) )
+        Cσ = - G/Γ * ( A₁*B₁ + 2*A₁*B₁*ϵ^2/(3*γ^2) )
+        Cσσ = G/Γ * (2A₁*B₁*ϵ/γ)
+    end
 
 
 
-    @assert !isnan(Cμ)
-    @assert !isnan(Cλ)
+    if isnan(Cμ)
+        println("Cμ = ", Cμ)
+        @assert !isnan(G/Γ)
+        println("G/Γ = ", G/Γ)
+        @assert !isnan( (3*(1-2ν))/(2*(1+ν)) + A₁^2/2 - A₁*B₁*ϵ/(2*γ) )
+        println("second term Cμ = ", (3*(1-2ν))/(2*(1+ν)) + A₁^2/2 - A₁*B₁*ϵ/(2*γ) )
+        @assert !isnan(G/Γ * ( (3*(1-2ν))/(2*(1+ν)) + A₁^2/2 - A₁*B₁*ϵ/(2*γ) ))
+    end
+    if isnan(Cλ)
+        println("Cλ = ", Cλ)
+    end
     @assert !isnan(Cσ)
     @assert !isnan(Cσσ)
     # functional form of the stiffness tensor

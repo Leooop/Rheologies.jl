@@ -115,12 +115,13 @@ function write_output!(model, u, ow::OutputWriter{TF,F,I}) where {TF,F,I}
     end
 
     # fill data
+    nqp = length(model.material_state[1])
     for (el, cell_states) in enumerate(model.material_state)
         r = model.material_properties[el]
         for state in cell_states
             s = state
             for (key,value) in pairs(ow.outputs)
-                ow.data[key][el] += value(r,s)/4.0
+                ow.data[key][el] += value(r,s)/nqp
             end
         end
     end
@@ -224,7 +225,8 @@ function export_sim(filename, model, u, ow::VTKOutputWriter)
 end
 
 function export_sim(filename, model, u, ow::JLD2OutputWriter)
-    ow.data[:u] = u
+    ow.data[:u] = Vector{eltype(u)}(undef,length(u))
+    ow.data[:u] .= u
 
     # convert keys from symbols to strings
     data_dict = Dict{String,Any}(string(k)=>v  for (k,v) in pairs(ow.data))
@@ -237,7 +239,7 @@ function export_sim(filename, model, u, ow::JLD2OutputWriter)
 end
 
 function export_sim(filename, model, u, ow::MATOutputWriter)
-    ow.data[:u] = u
+    ow.data[:u] .= u
     # convert keys from symbols to strings
     data_dict = Dict{String,Any}(string(k)=>v  for (k,v) in pairs(ow.data))
     data_dict["t"] = model.clock.current_time # add simulation time

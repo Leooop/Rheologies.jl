@@ -149,6 +149,21 @@ function Base.show(io::IO, ::MIME"text/plain", elast::E) where{E<:Elasticity}
     "\t└── Dᵉ : $(Dᵉ_print)\n")
 end
 
+struct ViscousDruckerPrager{T,Tμ,TC,TΔC,TΔϵ,TH} <: Plasticity{T}
+    μ::Tμ
+    C::TC
+    ΔC::TΔC
+    Δϵ̅ᵖ::TΔϵ
+    H::TH
+    function ViscousDruckerPrager(μ,C,ΔC,Δϵ̅ᵖ,H)
+        T = any(isa.((μ,C,ΔC,Δϵ̅ᵖ,H),Function)) ? Function : Float64
+        return new{T,typeof(μ),typeof(C),typeof(ΔC),typeof(Δϵ̅ᵖ),typeof(H)}(μ,C,ΔC,Δϵ̅ᵖ,H)
+    end
+end
+ViscousDruckerPrager{T,Tμ,TC,TΔC,TΔϵ,TH}(μ,C,ΔC,Δϵ̅ᵖ,H) where {T,Tμ,TC,TΔC,TΔϵ,TH} = ViscousDruckerPrager(μ,C,ΔC,Δϵ̅ᵖ,H)
+ViscousDruckerPrager(; μ, C=0.0, ΔC=0.0, Δϵ̅ᵖ=0.0, H=0.0) = ViscousDruckerPrager(μ,C,ΔC,Δϵ̅ᵖ,H)
+
+
 """
 `DruckerPrager' type. Its instance contains general plastic properties.
 

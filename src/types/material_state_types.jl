@@ -168,7 +168,7 @@ mutable struct DamagedPlasticMaterialState{T} <: MaterialState{T}
     temp_σ::SymmetricTensor{2, 3, T}
 end
 
-function DamagedPlasticMaterialState{T}(r::Rheology) where {T<:Real}
+function DamagedPlasticMaterialState(r::Rheology{T}) where {T}
     return DamagedPlasticMaterialState(
                 r.damage.D₀,
                 zero(SymmetricTensor{2, 3, T}),
