@@ -84,7 +84,7 @@ end
 
 ## Functions for viscosity based drucker-prager plasticity :
 
-function assemble_cell!(Ke, fe, model::Model{dim,2,Nothing,TV,TE,TP}, cell, ɛdev, cvu, cvp, nu, np, u▄, p▄, nodal_vars_prev) where {dim,TV,TE,TP}
+function assemble_cell!(Ke, fe, model::Model{dim,2,Nothing,TV,TE,TP}, cell, ɛdev, cvu, cvp, nu, np, u▄, p▄, nodal_vars_prev) where {dim,TV,TE,TP<:ViscousDruckerPrager}
 
     reinit!(cvu, cell)
     reinit!(cvp, cell)

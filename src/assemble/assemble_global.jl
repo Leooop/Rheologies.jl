@@ -253,9 +253,8 @@ function doassemble_res!(res, model::Model{dim,2,TD,TV,TE,TP}, nbasefuncs, nodal
         assemble!(res, eldofs, re)
     end
 end
-# function f!(res,u0)
-#
-# end
+
+# 1 unknown only
 
 function doassemble!(model::Model{dim,1,D,V,E,P},nbasefuncs, u ; noplast = false) where {dim,D,V,E,P}
     assembler = start_assemble(model.K, model.RHS)

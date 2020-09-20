@@ -9,7 +9,7 @@ dim = 2 # spatial dimensions
 Lx = 40e3
 Ly = 25e3
 H_bdt = 10e3
-n_seeds = 2
+n_seeds = 0
 radius_bounds = (300, 400)
 el_geom = Triangle # Quadrilateral or Triangle, equivalent to Cell{dim,nnodes,nfaces}
 
@@ -19,8 +19,8 @@ highres=40 # near seeds
 radius = rand(n_seeds).*(radius_bounds[2]-radius_bounds[1]) .+ radius_bounds[1] # random radius from 1 to 3 km
 x0 = [[rand()*Lx , rand()*(H_bdt-2radius[i])+(Ly-H_bdt)+radius[i]] for i in 1:n_seeds]
 
-push!(radius,200.0)
-push!(x0, [Lx/2,Ly-radius[end]-100])
+#push!(radius,200.0)
+#push!(x0, [Lx/2,Ly-radius[end]-100])
 #push!(x0, [Lx/2,20e3])
 
 # generate the grid and sets:
@@ -29,7 +29,7 @@ generate_mesh3(x0, radius ; Lx, Ly, H_bdt, lowres, highres, el_type = el_geom, f
 grid = generate_grid(meshfile) # can take 2 or 4 corners
 # Add facesets / nodesets / cellsets on which bc will be applied (except for the top, bottom, left and right boundary that are implemented by default)
 #addnodeset!(grid, "clamped", x -> (x[1] == corner_u[1] && 24.5<x[2]<=25.5));
-addnodeset!(grid, "clamped", x -> ( any(x[1] .≈ (0.0,Lx)) & (x[2] ≈ Ly-H_bdt) ));
+addnodeset!(grid, "clamped", x -> ( (x[1] .≈ Lx/2) & (x[2] ≈ Ly) ));
 #addnodeset!(grid, "clamped_down", x -> ( (x[1] == 0.0) & (x[2] in (0.0,Ly) ) ));
 
 
@@ -56,13 +56,13 @@ v_in = 2*Ly*v_out/Lx
 bc = BoundaryConditions(dirichlet = Dict("left" => [:u, (x,t)-> v_out*t, 1],
                                          "right" => [:u, (x,t)-> -v_out*t, 1],
                                          #"top" => [:u, (x,t)-> Vec(0.0,0.0), [1,2]],
-                                         "bottom" => [:u, (x,t)-> 0.0, 2]
-                                         #"clamped" => [:u, (x,t)-> 0.0, 2]
+                                         #"bottom" => [:u, (x,t)-> -v_in*t, 2]
+                                         "clamped" => [:u, (x,t)-> Vec(0.0,0.0), [1,2]]
                                          ),
                         neumann   = nothing)#Dict("top" => (x,t)->Vec(0.0,-1e5),
                                          #"bottom" => (x,t)->Vec(0.0,1e5)) )
 
-bf = BodyForces([0.0,-9.81*2700])#-9.81*2700])
+bf = BodyForces([0.0,0.0])#-9.81*2700])
 
 ## MATERIAL RHEOLOGY :
 
@@ -88,7 +88,7 @@ plas  = DruckerPrager(ϕ = 30.0,
 
 VEP_rheology = Rheology(viscosity = visco,
                         elasticity = elas,
-                        plasticity = plas )
+                        plasticity = nothing )
 
 
 # function sigma_func(x,bf)
@@ -115,7 +115,7 @@ clock = Clock(tspan = (0.0,500year), Δt = 1year, Δt_max = 20year)
 
 ### SOLVER ###
 linsolver = BackslashSolver()
-nlsolver = NewtonRaphson(max_iter_number = 15, atol = 10, linear_solver = linsolver)
+nlsolver = NewtonRaphson(max_iter_number = 15, atol = 1e-5, linear_solver = linsolver)
 
 
 ### MODEL ###
@@ -135,14 +135,14 @@ output_name = "VEP_crust_gmsh"
 VEP_outputs = Dict( :σxx     => (r,s)-> s.σ[1,1],
                     :σyy     => (r,s)-> s.σ[2,2],
                     :σzz     => (r,s)-> s.σ[3,3],
-                    :acum_ep => (r,s)-> s.ϵ̅ᵖ,
+                    #:acum_ep => (r,s)-> s.ϵ̅ᵖ,
                     :gamma   => (r,s)-> sqrt(2* dev(s.ϵ) ⊡ dev(s.ϵ)),
                     #:η => (r,s)-> r.viscosity.η,
                     #:C => (r,s)-> r.plasticity.C,
                     #:E => (r,s)-> r.elasticity.E,
-                    :τ       => (r,s)-> R.get_τ(dev(s.σ),r.plasticity),
+                    :τ       => (r,s)-> R.get_τ(dev(s.σ); plas = :DruckerPrager),
                     :p       => (r,s)-> -1/3 * tr(s.σ),
-                    :τoverp  => (r,s)-> R.get_τ(dev(s.σ),r.plasticity)/(-1/3 * tr(s.σ)) )
+                    :τoverp  => (r,s)-> R.get_τ(dev(s.σ); plas = :DruckerPrager)/(-1/3 * tr(s.σ)) )
 
 VEP_ow = VTKOutputWriter(VEP_model, joinpath(output_path, output_name), VEP_outputs, interval = 1, force_path = true)
 

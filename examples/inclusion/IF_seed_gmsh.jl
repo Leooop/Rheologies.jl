@@ -9,13 +9,13 @@ dim = 2 # spatial dimensions
 
     Lx = 1 # same as inclusion.msh mesh
     Ly = 2 # same as inclusion.msh mesh
-    radius = Lx/40
+    radius = Lx/50
     el_geom = Triangle # Quadrilateral or Triangle, equivalent to Cell{dim,nnodes,nfaces}
 
     # generate the grid and sets:
     meshfile = joinpath(output_path,"inclusion.msh")
 
-    generate_mesh_inclusion(; Lx, Ly, radius ,lowres=0.03, highres=0.002, file=meshfile)
+    generate_mesh_inclusion(; Lx, Ly, radius ,lowres=0.04, highres=0.003, file=meshfile)
     grid = generate_grid(meshfile)
     #grid = generate_grid(el_geom, (nx, ny), corner1, Vec(corner1[1]+Lx, corner1[2]+Ly)) # can take 2 or 4 corners
 
@@ -60,18 +60,19 @@ dim = 2 # spatial dimensions
     elas = Elasticity(E = x -> seed(x,x0,radius,30e9,70e9),
                       ν = x -> seed(x,x0,radius,0.45,0.3) )
 
-    Δσ = 5e3
-    plas  = DruckerPrager(ϕ = 30.0,
-                          C = x -> seed(x,x0,radius,1e6,2e6),
-                          H = -5e7,
-                          ηᵛᵖ = Δσ*Ly/(2*v_in))
+    Δσ = 5e4 ; ϵ̇ᵖ_estimate = 2v_in/(Ly/40) # to 
+
+    plas  = DruckerPrager(ϕ = 30.0, # friction angle
+                          C = x -> seed(x,x0,radius,1e6,2e6), # cohesion
+                          H = 0.0, # hardening modulus
+                          ηᵛᵖ = Δσ/ϵ̇ᵖ_estimate) # viscosity of the visco-plastic element
 
 
     rheology = Rheology(elasticity = elas,
                         plasticity = plas )
 
     ### CLOCK ###
-    clock = Clock(tspan = (0.0,40.0), Δt = 1.0, Δt_max = 10.0, Δt_fact_up = 1.2)
+    clock = Clock(tspan = (0.0,15.0), Δt = 1.0, Δt_max = 10.0, Δt_fact_up = 1.2)
 
     ### SOLVER ###
     linsolver = BackslashSolver()
@@ -79,7 +80,7 @@ dim = 2 # spatial dimensions
     # linsolver = ConjugateGradient(package = :IterativeSolvers,
     #                              (max_iter = 1000,))
     #linsolver = MINRES(package = :IterativeSolvers)
-    nlsolver = NewtonRaphson(max_iter_number = 10, atol = 1e-5, linear_solver = linsolver)
+    nlsolver = NewtonRaphson(max_iter_number = 15, atol = 1e-5, linear_solver = linsolver)
 
 
     ### MODEL ###
@@ -122,7 +123,7 @@ dim = 2 # spatial dimensions
     #               :tauoverp  => (r,s)-> R.get_τ(dev(s.σ),r.plasticity)/-(1/3 * tr(s.σ))
     #               )
 
-    VTK_ow = VTKOutputWriter(model, joinpath(output_path,"inclusion_elastique_gmsh_EP"), outputs, interval = 5, force_path = true);
+    VTK_ow = VTKOutputWriter(model, joinpath(output_path,"inclusion_elastique_gmsh_EP_with_eta_vp_$(plas.ηᵛᵖ)"), outputs, interval = 1, force_path = true);
     #MAT_ow = MATOutputWriter(model, joinpath(path,"sawcut_EP_MAT"), mat_outputs, interval = 1, force_path = true);
     #JLD2_ow = JLD2OutputWriter(model, joinpath(path,"seed_EP_JLD2"), outputs, interval = 1, force_path = true);
     #ow = MixedOutputWriter(VTK_ow,JLD2_ow);
