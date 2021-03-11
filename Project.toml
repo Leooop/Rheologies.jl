@@ -6,6 +6,7 @@ version = "0.1.0"
 [deps]
 BlockArrays = "8e7c35d0-a365-5155-bbbb-fb81a777f24e"
 Cassette = "7057c7e9-c182-5462-911a-8362d720325c"
+DamagedShearBand = "45aa19b2-dc3c-4cb9-a9f3-5fc87f1f803e"
 FileIO = "5789e2e9-d7fb-5bc7-8068-2c6fae9b9549"
 FiniteDiff = "6a86dc24-6348-571c-b903-95158fe2bd41"
 FiniteDifferences = "26cc04aa-876d-5657-8c51-4c34ba976000"
@@ -34,7 +35,6 @@ TimerOutputs = "a759f4b9-e2f1-59dc-863e-4aeb61b1ea8f"
 
 [compat]
 BlockArrays = "0.11.1"
-JuAFEM = "0.2"
 Tensors = "1.4.2"
 julia = "1.3"
 

@@ -239,8 +239,8 @@ function iterate(model::Model{2,2,D,V,E,P}, output_writer, initial_values = noth
 
                 #TEST#
                 if clock.iter in (2,3)
-                    println("u cell 1 value after convergence and export : ")
-                    display(u[1:22])
+                    #println("u cell 1 value after convergence and export : ")
+                    #display(u[1:22])
                 end
                 ######
             end

@@ -113,8 +113,8 @@ function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{D
     grid, dh, dbc, mp, states, res, K, clock, solver = model.grid, model.dofhandler, model.dirichlet_bc, model.material_properties, model.material_state, model.RHS, model.K, model.clock, model.solver
 
     if clock.iter in (2,3)
-        println("ue cell 1 début nonlinearsolve : ")
-        display(u[1:22])
+        # println("ue cell 1 début nonlinearsolve : ")
+        # display(u[1:22])
     end
     # number of base functions per element
     nbasefuncs = getnbasefunctions.(model.cellvalues_tuple)
@@ -137,8 +137,8 @@ function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{D
     apply!(u, dbc)  # set the prescribed dbcs values in the solution vector
 
     if clock.iter in (2,3)
-        println("ue cell 1 nonlinearsolve apres apply dbc on u : ")
-        display(u[1:22])
+        # println("ue cell 1 nonlinearsolve apres apply dbc on u : ")
+        # display(u[1:22])
     end
 
     newton_itr = -1 # initialize non linear iteration count
@@ -319,7 +319,8 @@ function nonlinear_solve!(u::Vector, u_prev::Vector, δu::Vector, model::Model{D
                     println("convergence with damage growth, restart_flag set to false, should allow time stepping")
                     break
                 elseif restart_flag == false
-                    restart_flag = :activate_damage
+                    #restart_flag = :activate_damage #good line # TODO put it back
+                    # uncomment previous line to enable damage growth
                     println("convergence without damage growth, restart_flag set to :activate_damage, should restart time iteration")
                     break
                 end

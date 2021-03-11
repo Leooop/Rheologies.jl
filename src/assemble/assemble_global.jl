@@ -142,8 +142,8 @@ end
 function doassemble_elast!(res, K, model::Model{dim,2,TD,TV,TE,TP}, nbasefuncs, nodal_vars, nodal_vars_prev) where {dim,TD<:Damage,TV,TE,TP}
 
     #test#
-    println("ue cell 1 : ")
-    display(nodal_vars[1:22])
+    # println("ue cell 1 : ")
+    # display(nodal_vars[1:22])
     ######
     # Initialize res vector and K matrix
     #assembler = start_assemble(model.K, model.RHS)

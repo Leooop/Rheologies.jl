@@ -551,7 +551,7 @@ function compute_stress_tangent(ϵij,
     Δϵ = ϵij - s.ϵ # strain increment
     p_trial = 1/3 * tr(σ_trial) # trial pressure, negative in compression
     s_trial = dev(σ_trial) # trial deviatoric stress
-    τ_trial = get_τ(s_trial,r.damage) # effetive trial-stress (2nd invariant of the deviatoric stress tensor)
+    τ_trial = get_τ(s_trial,r.damage) # effective trial-stress (2nd invariant of the deviatoric stress tensor)
     KI_trial = compute_KI(r,p_trial,τ_trial,s.D) # KI at the end of the timestep if the loading is purely elastic
 
     if KI_trial < 0.0 # elastic loading over Δt

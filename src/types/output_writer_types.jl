@@ -200,7 +200,7 @@ function create_dir(path, force_path)
 end
 
 function erase_input(path,files)
-    key = readline(stdin)
+    key = readline()
     if (key == "y") | (key == "Y")
         @info "All non .jl files removed from directory"
         rm.(joinpath.(Ref(path),files))
@@ -208,7 +208,7 @@ function erase_input(path,files)
         @info "Existing non .jl files left in place"
     else
         @warn "input key is non recognized, please type \"y\" or \"n\""
-        erase_input()
+        erase_input(path,files)
     end
     return nothing
 end

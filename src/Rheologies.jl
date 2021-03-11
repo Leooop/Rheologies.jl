@@ -18,6 +18,7 @@ module Rheologies
     using LinearAlgebra
 
     using ForwardDiff
+    using DiffResults
     #import MUMPSjInv
     #import Preconditioners
 

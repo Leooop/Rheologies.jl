@@ -24,29 +24,41 @@ free_energy_convexity(r,D,A₁,B₁) = 1/compute_Γ(r,A₁,B₁) > 0 ? true : fa
 function compute_c1(d::Damage,D)
     α = cosd(d.ψ)
     @assert α > 0
-    @assert (D/d.D₀) >= 1
-    sqrt(1-α^2)/(π*α^(3/2)*((D/d.D₀)^(1/3) - 1 + d.β/α)^(3/2))
+    if d.D₀>0
+        @assert (D/d.D₀) >= 1
+        sqrt(1-α^2)/(π*α^(3/2)*((D/d.D₀)^(1/3) - 1 + d.β/α)^(3/2))
+    elseif (d.D₀==0) & (D==0)
+        return sqrt(1-α^2)/(π*α^(3/2)*(d.β/α)^(3/2)) # lim D->0 D/D0 = 1
+      end
 end
 # Perol&Bhat2016 : 1/α  or  Harsha's notes : 1/α^2 ???
-compute_c2(d::Damage,D) = (sqrt(1 - cosd(d.ψ)^2)/cosd(d.ψ)^2) * (d.D₀^(2/3)/(1 - D^(2/3)))
+function compute_c2(d::Damage,D)
+    α = cosd(d.ψ)
+    (d.D₀==0) && (return 0.0)
+    return (sqrt(1 - α^2)/α^2) * (d.D₀^(2/3)/(1 - D^(2/3))) ###
+  end
 
 function compute_c3(d::Damage,D)
     α = cosd(d.ψ)
     @assert α > 0
+    (d.D₀ == D) && (return 0.0)
     @assert (D/d.D₀) >= 1
     (2sqrt(α)/π)*((D/d.D₀)^(1/3) - 1)^(1/2)
 end
 
-compute_c1(r::Rheology,D) = compute_c1(r.damage,D)
-compute_c2(r::Rheology,D) = compute_c2(r.damage,D)
-compute_c3(r::Rheology,D) = compute_c3(r.damage,D)
+compute_c1(r::Rheology,D) = compute_c1(r.damage::Damage,D)
+compute_c2(r::Rheology,D) = compute_c2(r.damage::Damage,D)
+compute_c3(r::Rheology,D) = compute_c3(r.damage::Damage,D)
 
-function compute_c1c2c3(r,D)
-    c1 = compute_c1(r,D)
-    c2 = compute_c2(r,D)
-    c3 = compute_c3(r,D)
+function compute_c1c2c3(d::Damage,D)
+    c1 = compute_c1(d,D)
+    c2 = compute_c2(d,D)
+    c3 = compute_c3(d,D)
     return c1, c2, c3
 end
+
+compute_c1c2c3(r::Rheology,D) = compute_c1c2c3(r.damage::Damage,D)
+
 # eq 15 Bhat2012 (A1 : *c2*c3), Perol&Bhat2016 (A1 : ...*c2)*c3):
 # Perol&Bhat2016 is the corrected version, and the one implemented
 compute_A(r::Rheology,c1,c2,c3) = r.damage.μ*c1 + (1.0 + r.damage.μ*c2)*c3
@@ -59,11 +71,20 @@ function compute_AB(d::Damage,c1,c2,c3)
     return A, B
 end
 compute_AB(r::Rheology,c1,c2,c3) = compute_AB(r.damage,c1,c2,c3)
+compute_AB(r::Rheology,D) = compute_AB(r,compute_c1c2c3(r,D)...)
 
 
 # eq 11 in Harsha's notes :
 compute_A1(r::Rheology,A) = A * sqrt((π*r.damage.D₀*(1 - r.elasticity.ν))/cosd(r.damage.ψ)^3)
 compute_B1(r::Rheology,B) = B * sqrt((π*r.damage.D₀*(1 - r.elasticity.ν))/cosd(r.damage.ψ)^3)
+
+function compute_A1B1(r::Rheology,A,B)
+    A1 = compute_A1(r,A)
+    B1 = compute_B1(r,B)
+    return A1, B1
+end
+
+compute_A1B1(r::Rheology,D) = compute_A1B1(r,compute_AB(r,D)...)
 
 function compute_a1(B1,Γ)
     return (1/Γ)*(1 + B1^2/2)
@@ -76,35 +97,6 @@ end
 function compute_b2(r::Rheology,A1,Γ)
     return (1/Γ)*(A1^2/2 + (3*(1-2r.elasticity.ν))/(2*(1+r.elasticity.ν)))
 end
-
-
-
-
-function compute_KI(r::Rheology,σ,τ,A,B)
-    return (A*σ + B*τ) * sqrt(π*r.damage.a)
-end
-
-function compute_KI(r::Rheology,σ,τ,D)
-    c1, c2, c3 = compute_c1c2c3(r,D)
-    A, B = compute_AB(r,c1,c2,c3)
-    # println("c1 : ",c1)
-    # println("c2 : ",c2)
-    # println("c3 : ",c3)
-    # println("σ : ",σ)
-    # println("τ : ",τ)
-    return (A*σ + B*τ) * sqrt(π*r.damage.a)
-end
-
-function compute_KI(d::Damage,σij,D)
-    c1, c2, c3 = compute_c1c2c3(d,D)
-    A, B = compute_AB(d,c1,c2,c3)
-    p = 1/3 * tr(σij) # trial pressure, negative in compression
-    sij = dev(σij) # trial deviatoric stress
-    τ = get_τ(sij,d)
-    return (A*p + B*τ) * sqrt(π*d.a)
-end
-
-compute_KI(r::Rheology,σij,D) = compute_KI(r.damage,σij,D)
 
 function compute_Γ(r::Rheology,A₁,B₁)
     ν = r.elasticity.ν
@@ -146,7 +138,7 @@ function compute_dc3dD(r::Rheology,D)
     term2 = ((D/d.D₀)^(1/3) - 1)^(-1/2)
 
     # ensure term2 isn't Infinity
-    (term2 == Inf) && (term2 = 1e9)
+    (term2 == Inf) && (term2 = 1e15)
     return term1 * term2
 end
 
@@ -214,12 +206,54 @@ function compute_dτdt(r::Rheology,b1,b2,db1dt,db2dt,ϵ,γ,dϵdt,dγdt)
     return r.elasticity.G * (db1dt*ϵ + b1*dϵdt + db2dt*γ + b2*dγdt)
 end
 
+# Damage growth and KI
+
+function compute_KI(r::Rheology,σ,τ,A,B)
+    return (A*σ + B*τ) * sqrt(π*r.damage.a)
+end
+
+function compute_KI(r::Rheology,σ,τ,D)
+    c1, c2, c3 = compute_c1c2c3(r,D)
+    A, B = compute_AB(r,c1,c2,c3)
+    # println("c1 : ",c1)
+    # println("c2 : ",c2)
+    # println("c3 : ",c3)
+    # println("σ : ",σ)
+    # println("τ : ",τ)
+    return (A*σ + B*τ) * sqrt(π*r.damage.a)
+end
+
+function compute_KI(d::Damage,σij::SymmetricTensor,D)
+    c1, c2, c3 = compute_c1c2c3(d,D)
+    A, B = compute_AB(d,c1,c2,c3)
+    p = 1/3 * tr(σij) # trial pressure, negative in compression
+    sij = dev(σij) # trial deviatoric stress
+    τ = get_τ(sij,d)
+    return (A*p + B*τ) * sqrt(π*d.a)
+end
+compute_KI(r::Rheology,σij,D) = compute_KI(r.damage,σij,D)
+
 function compute_dDdl(r::Rheology,D)
     d = r.damage
     return (3*D^(2/3)*d.D₀^(1/3))/(cosd(d.ψ)*d.a)
 end
 
 function compute_subcrit_damage_rate(r::Rheology, KI, D)
+    ((KI <= 0) | (D >= 1)) && (return 0.0)
+    d = r.damage
+    e = r.elasticity
+    ρ = 2700 ##### TODO better
+    Vs = sqrt(e.G/ρ)
+    Vr = Vs * (0.862 + 1.14e.ν)/(1 + e.ν)
+
+    dDdl = compute_dDdl(r,D) # damage derivative wrt crack length
+    dldt = min(d.l̇₀*(KI/d.K₁c)^(d.n),Vr)  # cracks growth rate
+    @assert dDdl * dldt >= 0
+    return dDdl * dldt
+end
+
+function compute_subcrit_damage_rate(r::Rheology, σij::SymmetricTensor, D)
+    KI = compute_KI(r,σij,D)
     ((KI <= 0) | (D >= 1)) && (return 0.0)
     d = r.damage
     e = r.elasticity
@@ -415,11 +449,64 @@ end
 #     du[2] = dϵ = Δϵ/Δt
 #     du[3] = dσ = compute_dσijdt(rheology, ϵ, D, du[2], du[1])
 # end
+function compute_ϵ_oop(r::Rheology,A1,B1,σᵢⱼ::SymmetricTensor)
+
+    σoop = σᵢⱼ[3,3]
+    σ = 1/3*tr(σᵢⱼ)
+    sᵢⱼ = dev(σᵢⱼ)
+    τ = get_τ(sᵢⱼ,r.damage)
+    G = r.elasticity.G
+    ν = r.elasticity.ν
+    
+    # stress tensor calculation
+    term1 = ( 1 + A1*B1*σ/(2*τ) + B1^2/2) * σoop
+    term2 = (3ν/(1+ν) + A1*B1*σ/(2*τ) - A1^2/3 + B1^2/2) * σ
+    term3 = A1*B1*τ/3
+    return (1/(2G)) * (term1 - term2 + term3)
+end
+compute_ϵ_oop(r,D,σᵢⱼ)=compute_ϵ_oop(r,compute_A1B1(r,D)...,σᵢⱼ)
+
+function compute_ϵ_oop(r::Rheology,A1,B1,σᵢⱼ::SymmetricTensor)
+
+    σoop = σᵢⱼ[3,3]
+    σ = 1/3*tr(σᵢⱼ)
+    sᵢⱼ = dev(σᵢⱼ)
+    τ = get_τ(sᵢⱼ,r.damage)
+    G = r.elasticity.G
+    ν = r.elasticity.ν
+    
+    # stress tensor calculation
+    term1 = ( 1 + A1*B1*σ/(2*τ) + B1^2/2) * σoop
+    term2 = (3ν/(1+ν) + A1*B1*σ/(2*τ) - A1^2/3 + B1^2/2) * σ
+    term3 = A1*B1*τ/3
+    return (1/(2G)) * (term1 - term2 + term3)
+end
+
+function compute_ϵij(r,A1,B1,σᵢⱼ::SymmetricTensor)
+
+    if all(σᵢⱼ.==0)
+        return σᵢⱼ
+    end
+    σ = 1/3*tr(σᵢⱼ)
+    sᵢⱼ = dev(σᵢⱼ)
+    τ = get_τ(sᵢⱼ,r.damage)
+    G = r.elasticity.G
+    ν = r.elasticity.ν
+    Id = SymmetricTensor{2,3}(δ)
+    # strain invariants 
+    term1 = ( 1 + A1*B1*σ/(2*τ) + B1^2/2) * σᵢⱼ
+    term2 = (3ν/(1+ν) + A1*B1*σ/(2*τ) - A1^2/3 + B1^2/2) * σ
+    term3 = A1*B1*τ/3
+    return (1/(2G)) * (term1 + (term3 - term2)*Id)
+end
+
+compute_ϵij(r::Rheology,D,σᵢⱼ::SymmetricTensor) = (D==0) ? compute_ϵij(r,0.0,0.0,σᵢⱼ) : compute_ϵij(r,compute_A1B1(r,D)...,σᵢⱼ)
+  
 function compute_σij(r,A1,B1,Γ,ϵij)
     # TODO make a visco elastic version of this function
 
     if all(x->x==0,ϵij)
-        return Tensor{2,3}(ϵij)
+        return SymmetricTensor{2,3}(ϵij)
     end
 
     G = r.elasticity.G
@@ -429,6 +516,8 @@ function compute_σij(r,A1,B1,Γ,ϵij)
     ϵ = tr(ϵij)
     e = dev(ϵij)
     γ = sqrt(2.0 * e ⊡ e)
+    (γ == 0) && (γ = nextfloat(0.0))
+    (γ == Inf) && (γ = prevfloat(Inf))
 
     # stress tensor calculation
     term1 = ( (3*(1-2ν))/(1+ν) + A1^2 - A1*B1*ϵ/γ ) * ϵij
@@ -442,7 +531,7 @@ function compute_σij(r,D,ϵij)
     # TODO make a visco elastic version of this function
 
     if all(x->x==0,ϵij)
-        return Tensor{2,3}(ϵij)
+        return SymmetricTensor{2,3}(ϵij)
     end
     # unpack
     G = r.elasticity.G
@@ -470,6 +559,62 @@ function compute_σij(r,D,ϵij)
     term3 = -A1*B1*γ/2
     return (G/Γ) * (term1 + (term2 + term3)*Id)
 end
+
+function compute_σ̇ij(r,D,Ḋ,ϵij,ϵ̇ij)
+
+    if all(x->x==0,ϵij)
+        all(x->x==0,ϵ̇ij) && (return SymmetricTensor{2,3}(ϵij))
+    end
+    # unpack
+    G = r.elasticity.G
+    ν = r.elasticity.ν
+
+    # Create Identity 3*3 tensor
+    𝕀 = SymmetricTensor{2,3}(δ)
+
+    # Damage constants
+    c1, c2, c3 = compute_c1c2c3(r,D)
+    A, B = compute_AB(r,c1,c2,c3)
+    A1 = compute_A1(r,A)
+    B1 = compute_B1(r,B)
+    Γ = compute_Γ(r,A1,B1)
+    dc1dD = compute_dc1dD(r,D)
+    dc2dD = compute_dc2dD(r,D)
+    dc3dD = compute_dc3dD(r,D)
+    dA1dD = compute_dA1dD(r,dc1dD,dc2dD,dc3dD,c2,c3)
+    dA1dD = compute_dB1dD(r,dc1dD,dc2dD,dc3dD,c2,c3)
+    dΓdD = compute_dΓdD(r,A1,B1,dA1dD,dB1dD)
+
+    # strain invariants
+    ϵ = tr(ϵij)
+    e = dev(ϵij)
+    γ = sqrt(2.0 * e ⊡ e)
+    (γ == 0) && (γ = nextfloat(0.0))
+    (γ == Inf) && (γ = prevfloat(Inf))
+
+    ϵ̇ = tr(ϵ̇ij)
+    ė = dev(ϵ̇ij)
+    γ̇ = e ⊡ ė / (2*γ)
+    
+    # stress tensor calculation
+    f1 = f₁(ϵ,γ,A1,B1)
+    f2 = f₂(ϵ,γ,A1,B1)
+    f3 = f₃(A1,B1)
+    df1dt = df₁dt(ϵ, γ, A1, B1, ϵ̇, γ̇, Ḋ, dA1dD, dB1dD)
+    df2dt = df₂dt(ϵ, γ, A1, B1, ϵ̇, γ̇, Ḋ, dA1dD, dB1dD)
+    df3dt = df₃dt(D,Ḋ,dA1dD, dB1dD)
+
+    term1 = df1dt*ϵij + f1*ϵ̇ij + (df2dt*ϵ + f2*ϵ̇ + df3dt*γ + f3*γ̇)*𝕀
+    term2 = f1*ϵij + (f2*ϵ + f3*γ)*𝕀
+    return (G/Γ) * (term1 - (1/Γ)*dΓdD*Ḋ*term2)
+end
+f₁(ϵ,γ,A1,B1) = 3*(1-2ν)/(1+ν) + A1^2 - A1*B1*ϵ/γ
+f₂(ϵ,γ,A1,B1) = 3*ν/(1+ν) + B1^2/2 - A1^2/3 + A1*B1*ϵ/(3*γ)
+f₃(A1,B1) = -A1*B1/2
+
+df₁dt(ϵ, γ, A1, B1, ϵ̇, γ̇, Ḋ, dA1dD, dB1dD) = -(A1*B1/γ)*ϵ̇ + (A1*B1*ϵ/γ^2)*γ̇ + (2*A1*dA1dD - (dA1dD*B1 + A1*dB1dD)*ϵ/γ)*Ḋ
+df₂dt(ϵ, γ, A1, B1, ϵ̇, γ̇, Ḋ, dA1dD, dB1dD) = (A1*B1/(3*γ))*ϵ̇ - (A1*B1*ϵ/(3*γ^2))*γ̇ + (B1*dB1dD - 2/3*A1*dA1dD - (dA1dD*B1 + A1*dB1dD)*ϵ/(3γ))*Ḋ
+df₃dt(D,Ḋ,dA1dD, dB1dD) = -0.5*(dA1dD*B1 + A1*dB1dD)*Ḋ
 
 function state_system!(du,u,p,t)
     D, ϵ, γ, σ, τ = u
